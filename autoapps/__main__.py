@@ -16,6 +16,11 @@ def cmd_serve(config: Config, args) -> int:
     from .web.app import create_app
 
     print(f"AutoApps running at {config.base_url}  (Ctrl+C to stop)")
+    if not args.no_browser:
+        import threading
+        import webbrowser
+
+        threading.Timer(1.5, webbrowser.open, args=[config.base_url]).start()
     uvicorn.run(create_app(config=config), host=config.host, port=config.port, log_level="warning")
     return 0
 
@@ -69,6 +74,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("command", nargs="?", default="serve", choices=["serve", "refresh", "doctor"])
     parser.add_argument("--port", type=int, help="port for the web UI (default 8000)")
     parser.add_argument("--data-dir", help="where the database and files live (default ./data)")
+    parser.add_argument("--no-browser", action="store_true", help="don't open the UI in a browser tab")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
