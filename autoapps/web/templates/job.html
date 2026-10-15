@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}{{ job.title }}{% endblock %}
+{% block content %}
+<p><a href="/">← Jobs</a></p>
+<h1>{{ job.title }} <span class="muted">· {{ job.company }}</span></h1>
+<p class="muted">{{ job.location }}{% if job.posted_at %} · posted {{ job.posted_at[:10] }}{% endif %} · {{ job.ats }}
+  {% if job.sponsorship %} · {{ job.sponsorship }}{% endif %}</p>
+<div class="toolbar">
+  {% if app %}
+    <a class="btn primary" href="/applications/{{ app.id }}">Open application ({{ STATUS_LABELS[app.status] }})</a>
+  {% else %}
+  <form method="post" action="/jobs/action">
+    <input type="hidden" name="job_ids" value="{{ job.id }}">
+    <button class="primary" name="action" value="prepare">Prepare application</button>
+    <button name="action" value="shortlist">Shortlist</button>
+    <button name="action" value="dismiss">Dismiss</button>
+  </form>
+  {% endif %}
+  <a class="btn" href="{{ job.url or job.apply_url }}" target="_blank" rel="noopener">View posting ↗</a>
+</div>
+<div class="card desc">{{ job.description or 'No description yet. It is fetched when you prepare an application.' }}</div>
+{% endblock %}

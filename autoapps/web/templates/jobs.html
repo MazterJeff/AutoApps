@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Jobs{% endblock %}
+{% block content %}
+<div class="toolbar" style="justify-content:space-between">
+  <h1 style="margin:0">Internships</h1>
+  <form method="post" action="/jobs/refresh">
+    <span class="muted small">
+      {% if refresh.running %}Refreshing…{% elif refresh.finished_at %}Last refresh {{ refresh.finished_at[:16].replace('T',' ') }} UTC · {{ refresh.new }} new{% else %}No refresh yet{% endif %}
+      {% if refresh.errors %} · <a href="/sources">{{ refresh.errors|length }} source error(s)</a>{% endif %}
+    </span>
+    <button class="primary" {% if refresh.running %}disabled{% endif %}>Refresh jobs</button>
+  </form>
+</div>
+
+<form method="get" action="/" class="card">
+  <input type="hidden" name="applied" value="1">
+  <div class="grid">
+    <div><label>Keywords</label><input type="text" name="keywords" value="{{ flt.keywords }}" placeholder="python -senior"></div>
+    <div><label>Title contains (any)</label><input type="text" name="title" value="{{ flt.title }}" placeholder="software, data, ml"></div>
+    <div><label>Location (any)</label><input type="text" name="location" value="{{ flt.location }}" placeholder="new york, chicago, remote"></div>
+    <div><label>Companies (any)</label><input type="text" name="companies" value="{{ flt.companies }}" placeholder="stripe, figma"></div>
+    <div><label>Exclude companies</label><input type="text" name="exclude_companies" value="{{ flt.exclude_companies }}"></div>
+    <div><label>Posted within (days)</label><input type="number" min="1" name="posted_within_days" value="{{ flt.posted_within_days or '' }}"></div>
+    <div><label>Min. skill match</label><input type="number" min="0" max="100" name="min_score" value="{{ flt.min_score }}" {% if not has_skills %}title="Add skills to your profile to use this"{% endif %}></div>
+    <div><label>Sort by</label>
+      <select name="sort">
+        {% for v, l in [('posted','Newest'), ('score','Skill match'), ('company','Company')] %}
+          <option value="{{ v }}" {{ 'selected' if flt.sort == v }}>{{ l }}</option>{% endfor %}
+      </select></div>
+  </div>
+  <div style="margin-top:12px">
+    <span class="muted small">Show:</span>
+    {% for s in ['new','shortlisted','queued','applied','dismissed'] %}
+      <label class="inline"><input type="checkbox" name="statuses" value="{{ s }}" {{ 'checked' if s in flt.statuses }}> {{ s }} <span class="muted small">({{ counts.get(s, 0) }})</span></label>
+    {% endfor %}
+  </div>
+  <div style="margin-top:6px">
+    <span class="muted small">Sources:</span>
+    {% for s in sources %}
+      <label class="inline"><input type="checkbox" name="sources" value="{{ s }}" {{ 'checked' if s in flt.sources }}> {{ s }}</label>
+    {% endfor %}
+    <label class="inline"><input type="checkbox" name="remote_only" value="1" {{ 'checked' if flt.remote_only }}> Remote only</label>
+    <label class="inline"><input type="checkbox" name="internships_only" value="1" {{ 'checked' if flt.internships_only }}> Internships only</label>
+    <label class="inline"><input type="checkbox" name="hide_no_sponsorship" value="1" {{ 'checked' if flt.hide_no_sponsorship }}> Hide "no sponsorship / citizens only"</label>
+  </div>
+  <div class="toolbar"><button class="primary">Apply filters</button> <a href="/?reset=1">Reset</a></div>
+</form>
+
+<form method="post" action="/jobs/action">
+  <input type="hidden" name="qs" value="{{ qs }}">
+  <div class="toolbar">
+    <strong>{{ total }} job{{ '' if total == 1 else 's' }}</strong>
+    <span class="muted">· with selected:</span>
+    <button class="primary" name="action" value="prepare">Prepare applications</button>
+    <button name="action" value="shortlist">Shortlist</button>
+    <button name="action" value="dismiss">Dismiss</button>
+    <button name="action" value="restore">Mark new</button>
+  </div>
+  <table>
+    <thead><tr>
+      <th style="width:28px"><input type="checkbox" onclick="document.querySelectorAll('input[name=job_ids]').forEach(c => c.checked = this.checked)"></th>
+      <th>Company</th><th>Role</th><th>Location</th><th>Posted</th><th title="Share of your profile skills mentioned in the posting">Match</th><th>Status</th>
+    </tr></thead>
+    <tbody>
+    {% for job, score in rows %}
+      <tr>
+        <td><input type="checkbox" name="job_ids" value="{{ job.id }}"></td>
+        <td>{{ job.company }}</td>
+        <td><a href="/jobs/{{ job.id }}">{{ job.title }}</a>
+          <div class="small muted">{{ job.ats }}{% if job.terms %} · {{ job.terms|join(', ') }}{% endif %}{% if job.sponsorship %} · {{ job.sponsorship }}{% endif %}</div></td>
+        <td class="small">{{ job.location|truncate(60) }}{% if job.remote %} <span class="pill">remote</span>{% endif %}</td>
+        <td class="small muted">{{ (job.posted_at or '')[:10] }}</td>
+        <td class="score">{{ score if has_skills else '–' }}</td>
+        <td><span class="pill">{{ job.status }}</span></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="muted" style="padding:24px">No jobs match. {% if not counts %}Click <b>Refresh jobs</b> to pull listings from your <a href="/sources">sources</a>.{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</form>
+{% if pages > 1 %}
+<div class="toolbar">
+  {% if page > 1 %}<a class="btn" href="/?{{ qs }}&page={{ page - 1 }}">← Prev</a>{% endif %}
+  <span class="muted">Page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}<a class="btn" href="/?{{ qs }}&page={{ page + 1 }}">Next →</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

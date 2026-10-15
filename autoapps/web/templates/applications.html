@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Applications{% endblock %}
+{% block head %}{% if busy %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
+{% block content %}
+<h1>Applications</h1>
+{% if busy %}<p class="muted small">Some drafts are in progress; this page refreshes itself.</p>{% endif %}
+{% for name, apps in groups.items() %}
+  <h2>{{ name }} <span class="muted">({{ apps|length }})</span></h2>
+  {% if apps %}
+  <table>
+    <thead><tr><th>Company</th><th>Role</th><th>Status</th><th>To review</th><th>Updated</th></tr></thead>
+    <tbody>
+    {% for a in apps %}{% set job = jobs[a.job_id] %}
+      <tr>
+        <td>{{ job.company if job else '?' }}</td>
+        <td><a href="/applications/{{ a.id }}">{{ job.title if job else a.job_id }}</a></td>
+        <td><span class="pill {{ a.status }}">{{ STATUS_LABELS[a.status] }}</span>
+            {% if a.error %}<div class="small muted">{{ a.error|truncate(90) }}</div>{% endif %}</td>
+        <td>{{ a.review_count if a.status in ['ready', 'needs_attention'] else '' }}</td>
+        <td class="small muted">{{ a.updated_at[:16].replace('T', ' ') }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">Nothing here.</p>{% endif %}
+{% endfor %}
+{% if not groups.values()|map('length')|sum %}<p>Select jobs on the <a href="/">Jobs</a> page and click <b>Prepare applications</b>.</p>{% endif %}
+{% endblock %}

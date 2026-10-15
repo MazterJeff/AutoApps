@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}AutoApps{% endblock %} · AutoApps</title>
+  <link rel="stylesheet" href="/static/style.css">
+  {% block head %}{% endblock %}
+</head>
+<body>
+<header>
+  <a class="brand" href="/">AutoApps</a>
+  {% set path = request.url.path %}
+  <nav>
+    <a href="/" class="{{ 'active' if path == '/' or path.startswith('/jobs') }}">Jobs</a>
+    <a href="/applications" class="{{ 'active' if path.startswith('/applications') }}">Applications
+      {% if nav_counts.review %}<span class="badge" title="waiting for your review">{{ nav_counts.review }}</span>{% endif %}
+      {% if nav_counts.busy %}<span class="badge" style="background:#8aa2e8" title="in progress">{{ nav_counts.busy }}</span>{% endif %}</a>
+    <a href="/profile" class="{{ 'active' if path.startswith('/profile') }}">Profile</a>
+    <a href="/sources" class="{{ 'active' if path.startswith('/sources') }}">Sources</a>
+    <a href="/settings" class="{{ 'active' if path.startswith('/settings') }}">Settings</a>
+  </nav>
+</header>
+<main>
+  {% if msg %}<div class="flash {{ level }}">{{ msg }}</div>{% endif %}
+  {% if profile_missing and not path.startswith('/profile') %}
+    <div class="flash warn">Your profile is missing: {{ profile_missing | join(', ') }}. <a href="/profile">Complete it</a> so forms can be filled.</div>
+  {% endif %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

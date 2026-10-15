@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Sources{% endblock %}
+{% block content %}
+<h1>Job sources</h1>
+<p class="muted">Board ids are the slug in a company's job-board URL — e.g. <code>stripe</code> in
+  <code>job-boards.greenhouse.io/stripe</code>, <code>palantir</code> in <code>jobs.lever.co/palantir</code>,
+  <code>openai</code> in <code>jobs.ashbyhq.com/openai</code>. One per line.</p>
+<form method="post" action="/sources">
+  <div class="grid" style="grid-template-columns:repeat(auto-fill, minmax(260px, 1fr))">
+    <div class="card"><label>Greenhouse boards</label><textarea name="greenhouse" style="min-height:220px">{{ cfg.greenhouse|join('\n') }}</textarea></div>
+    <div class="card"><label>Lever companies</label><textarea name="lever" style="min-height:220px">{{ cfg.lever|join('\n') }}</textarea></div>
+    <div class="card"><label>Ashby boards</label><textarea name="ashby" style="min-height:220px">{{ cfg.ashby|join('\n') }}</textarea></div>
+    <div class="card"><label>SimplifyJobs-style GitHub lists</label><textarea name="simplify" style="min-height:220px">{{ cfg.simplify|join('\n') }}</textarea>
+      <p class="small muted">"owner/repo" of lists that publish <code>.github/scripts/listings.json</code>. Thousands of internships across companies.</p></div>
+  </div>
+  <label class="inline"><input type="checkbox" name="internships_only" value="1" {{ 'checked' if cfg.internships_only }}> Only keep internship / co-op postings from company boards</label>
+  <div class="toolbar"><button>Save</button><button class="primary" name="refresh" value="1">Save &amp; refresh now</button></div>
+</form>
+
+<h2>Last refresh</h2>
+<div class="card">
+  {% if refresh.running %}<p>Refreshing…</p>{% endif %}
+  {% if refresh.finished_at %}<p>Finished {{ refresh.finished_at }} · {{ refresh.new }} new job(s).</p>{% endif %}
+  {% if refresh.counts %}<p class="small">{% for k, v in refresh.counts.items() %}{{ k }}: {{ v }}{{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+  {% if refresh.errors %}<h3>Errors</h3><ul class="small">{% for e in refresh.errors %}<li>{{ e }}</li>{% endfor %}</ul>
+    <p class="small muted">A 404 usually means the company moved to a different ATS or renamed its board — remove or fix that id.</p>{% endif %}
+  {% if not refresh.finished_at and not refresh.running %}<p class="muted">Not refreshed yet in this session.</p>{% endif %}
+</div>
+{% endblock %}

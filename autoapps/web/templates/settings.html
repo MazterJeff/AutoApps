@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+<form method="post" action="/settings" class="card">
+  <h2 style="margin-top:0">Drafting</h2>
+  <label class="inline"><input type="checkbox" name="always_cover_letter" value="1" {{ 'checked' if settings.always_cover_letter }}>
+    Write a cover letter even when the form doesn't ask for one</label>
+  <div class="grid" style="margin-top:10px">
+    <div><label>Cover letter length (words)</label><input type="number" min="100" max="800" name="cover_letter_words" value="{{ settings.cover_letter_words }}"></div>
+  </div>
+  <h2>Submitting</h2>
+  <label class="inline"><input type="radio" name="submit_mode" value="review" {{ 'checked' if settings.submit_mode == 'review' }}> Fill the form, I click Submit (recommended)</label>
+  <label class="inline"><input type="radio" name="submit_mode" value="auto" {{ 'checked' if settings.submit_mode == 'auto' }}> Fill and click Submit automatically</label>
+  <div style="margin-top:8px"><label class="inline"><input type="checkbox" name="headless" value="1" {{ 'checked' if settings.headless }}> Run the browser hidden for auto-submit (no chance to fix problems by hand)</label></div>
+  <div class="grid" style="margin-top:10px">
+    <div><label>Wait for me to finish in the browser (minutes)</label><input type="number" min="1" max="120" name="manual_wait_minutes" value="{{ settings.manual_wait_minutes }}"></div>
+  </div>
+  <h2>Notifications</h2>
+  <div class="grid"><div><label>Email me when a draft is ready</label><input type="email" name="notify_email" value="{{ settings.notify_email }}" placeholder="you@school.edu"></div></div>
+  <p class="small muted">{% if email_ok %}SMTP is configured.{% else %}Needs SMTP settings in the environment
+    (AUTOAPPS_SMTP_HOST, AUTOAPPS_SMTP_USER, AUTOAPPS_SMTP_PASSWORD, AUTOAPPS_SMTP_FROM) — see the README. Without them, drafts just show up on the Applications page.{% endif %}</p>
+  <button class="primary">Save settings</button>
+</form>
+<div class="card small muted">
+  Model: <code>{{ config.model }}</code> (set AUTOAPPS_MODEL to change) · Data folder: <code>{{ config.data_dir }}</code>
+</div>
+{% endblock %}

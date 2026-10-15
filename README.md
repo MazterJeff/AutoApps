@@ -1,0 +1,110 @@
+# AutoApps
+
+A local app that finds internships, lets you filter and pick the ones you want, drafts each
+application with Claude (form answers and a cover letter), sends the draft to you to review
+and edit, then fills in the real application form and submits it.
+
+```
+ Sources ──► Jobs list ──► you select ──► Draft (profile autofill + Claude) ──► you review/edit ──► browser fills & submits
+```
+
+Everything runs on your machine. Your data stays in `./data/` (SQLite database, resume,
+generated cover letters, screenshots).
+
+## Setup
+
+Requires Python 3.10+.
+
+```bash
+python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+playwright install chromium                             # the browser used to fill forms
+export ANTHROPIC_API_KEY=sk-ant-...                     # or run `ant auth login`
+python -m autoapps doctor                               # checks the install
+python -m autoapps                                      # starts the UI at http://127.0.0.1:8000
+```
+
+## Using it
+
+1. **Profile**: upload your resume (PDF works best, since that file is what gets uploaded).
+   Claude reads it and fills in your profile. Check the details, and answer the common
+   questions (work authorization, sponsorship, demographics, which default to "decline").
+2. **Sources**: pick which job boards to pull from. Out of the box you get the
+   [SimplifyJobs](https://github.com/SimplifyJobs) Summer 2027 internship list plus a set of
+   Greenhouse, Lever, and Ashby company boards. Add any company that uses one of those
+   systems by its board id (the slug in its job-board URL). Click **Refresh jobs**.
+3. **Jobs**: filter by keywords (`python -senior`), title, location, remote, company,
+   posting age, sponsorship, and *skill match* (how many of your profile skills the posting
+   mentions). Tick the jobs you want and click **Prepare applications**.
+4. **Applications**: each draft is built in the background:
+   - the app reads the job's actual application form (Greenhouse API, Lever page, or a
+     rendered browser page for everything else);
+   - fields it can answer from your profile or your **answer library** are filled with no AI;
+   - Claude drafts the rest (essay questions, odd dropdowns) plus a cover letter, using only
+     facts from your resume and profile;
+   - anything uncertain is flagged. Optionally you get an email when a draft is ready.
+5. **Review**: edit any answer. Ask Claude to revise an answer or the letter ("shorter",
+   "mention my robotics project"). Tick **remember** to reuse an answer on future forms.
+   Download the letter as PDF/Word.
+6. **Hand it in**:
+   - **Fill in browser, I'll click Submit** (default): a Chromium window opens with
+     everything filled in, including your resume and the cover letter PDF. You look it over and
+     click Submit. The app detects the confirmation page and marks the job applied.
+   - **Fill & submit automatically**: same, but the app clicks Submit too. If a CAPTCHA
+     or a field it couldn't fill blocks it, the window stays open for you to finish.
+
+The browser uses a persistent profile (`data/browser-profile`), so if a site needs a login
+(Workday, iCIMS, …) you sign in once and stay signed in.
+
+## What works where
+
+| Where the job is posted | Reading the form | Filling |
+|---|---|---|
+| Greenhouse | Official job-board API: exact questions and options | Good |
+| Lever | Parsed from the apply page | Good |
+| Ashby | Rendered in a headless browser | Usually good |
+| Workday, iCIMS, Taleo, custom sites | Best effort: rendered page or generic fields | Partial. These use accounts and multi-page wizards, so expect to finish by hand in the open window |
+
+CAPTCHAs are never bypassed; you solve them in the window. Some sites' terms of service
+restrict automated submissions, which is one reason the default mode leaves the final
+click to you.
+
+## Configuration
+
+Environment variables (all optional):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | | Claude credentials (or use `ant auth login`) |
+| `AUTOAPPS_MODEL` | `claude-opus-5-5` | Claude model used for drafting |
+| `AUTOAPPS_LLM_FALLBACKS` | `1` | Server-side refusal fallbacks; set `0` if your provider rejects them |
+| `AUTOAPPS_DATA_DIR` | `./data` | Where the database and files live |
+| `AUTOAPPS_PORT` | `8000` | Web UI port |
+| `AUTOAPPS_SMTP_HOST` / `_PORT` / `_USER` / `_PASSWORD` / `_FROM` | | For "draft ready" emails (e.g. Gmail: `smtp.gmail.com`, port 587, an app password) |
+
+In-app **Settings** control cover-letter length, whether to write letters for forms that
+don't ask, the default submit mode, and how long to wait for you in the browser.
+
+Command line:
+
+```bash
+python -m autoapps            # web UI (same as `serve`)
+python -m autoapps refresh    # pull jobs from all sources and print counts
+python -m autoapps doctor     # check dependencies, credentials, and Chromium
+```
+
+## Development
+
+```bash
+python -m unittest discover -s tests -t .
+```
+
+Layout:
+
+- `autoapps/sources/`: job board fetchers (Greenhouse, Lever, Ashby, SimplifyJobs lists)
+- `autoapps/forms/`: reading application forms (Greenhouse API, HTML parser, in-browser `extract.js`)
+- `autoapps/autofill.py`: rule-based mapping from your profile and saved answers to form questions
+- `autoapps/llm.py`: Claude calls (resume parsing, answers, cover letters, revisions)
+- `autoapps/pipeline.py`: queue → prepare → review → submit workflow
+- `autoapps/browser.py`: Playwright filling and submission
+- `autoapps/web/`: Starlette UI

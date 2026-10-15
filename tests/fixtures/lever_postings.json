@@ -1,0 +1,8 @@
+[
+ {"id": "aaaa-1111", "text": "Data Science Intern", "categories": {"commitment": "Internship", "location": "San Francisco, CA", "allLocations": ["San Francisco, CA", "Remote"]},
+  "hostedUrl": "https://jobs.lever.co/widgets/aaaa-1111", "applyUrl": "https://jobs.lever.co/widgets/aaaa-1111/apply",
+  "createdAt": 1790000000000, "descriptionPlain": "Analyze data with pandas.", "lists": [{"text": "Requirements", "content": "<li>Python</li><li>SQL</li>"}],
+  "additionalPlain": "Equal opportunity.", "workplaceType": "hybrid"},
+ {"id": "bbbb-2222", "text": "Account Executive", "categories": {"commitment": "Full-time", "location": "Austin, TX"},
+  "hostedUrl": "https://jobs.lever.co/widgets/bbbb-2222", "createdAt": 1790000000000, "descriptionPlain": "Sell."}
+]

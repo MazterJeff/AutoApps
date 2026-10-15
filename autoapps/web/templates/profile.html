@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Profile{% endblock %}
+{% macro text(name, label, placeholder='') %}
+  <div><label for="{{ name }}">{{ label }}</label><input type="text" id="{{ name }}" name="{{ name }}" value="{{ profile[name] }}" placeholder="{{ placeholder }}"></div>
+{% endmacro %}
+{% macro choice(name, label, options) %}
+  <div><label for="{{ name }}">{{ label }}</label>
+    <select id="{{ name }}" name="{{ name }}">
+      {% if profile[name] not in options %}<option value="{{ profile[name] }}" selected>{{ profile[name] or '— answer per application —' }}</option>{% endif %}
+      {% for o in options %}<option {{ 'selected' if profile[name] == o }}>{{ o }}</option>{% endfor %}
+    </select></div>
+{% endmacro %}
+{% block content %}
+<h1>Your profile</h1>
+<p class="muted">Used to fill every application. Claude only writes from what's here and in your resume.</p>
+
+<div class="card">
+  <h2 style="margin-top:0">Resume</h2>
+  {% if resume_ok %}
+    <p>Current: <a href="/profile/resume/file">{{ profile.resume_filename }}</a> — this file is uploaded to applications.</p>
+  {% else %}
+    <p class="muted">No resume yet. PDF works best (it's what gets uploaded); DOCX and TXT also work.</p>
+  {% endif %}
+  <form method="post" action="/profile/resume" enctype="multipart/form-data" class="toolbar">
+    <input type="file" name="resume" accept=".pdf,.docx,.txt,.md" required>
+    <label class="inline"><input type="checkbox" name="autofill" value="1" checked> Fill my profile from it with Claude</label>
+    <label class="inline"><input type="checkbox" name="overwrite" value="1"> Overwrite fields I've already filled</label>
+    <button class="primary">Upload</button>
+  </form>
+</div>
+
+<form method="post" action="/profile">
+<div class="card">
+  <h2 style="margin-top:0">Contact</h2>
+  <div class="grid">
+    {{ text('first_name', 'First name') }} {{ text('last_name', 'Last name') }} {{ text('preferred_name', 'Preferred name') }}
+    {{ text('email', 'Email') }} {{ text('phone', 'Phone') }} {{ text('location', 'Location', 'Chicago, IL') }}
+    {{ text('address', 'Street address') }} {{ text('pronouns', 'Pronouns') }}
+    {{ text('linkedin', 'LinkedIn URL') }} {{ text('github', 'GitHub URL') }} {{ text('website', 'Website / portfolio') }}
+  </div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">Education</h2>
+  <table class="rowform">
+    <tr><th>School</th><th>Degree</th><th>Major</th><th>Minor</th><th>GPA</th><th>Start</th><th>Graduation</th></tr>
+    {% for e in profile.education + [None] %}{% set i = loop.index0 %}
+    <tr>{% for a in ['school','degree','major','minor','gpa','start_date','graduation_date'] %}
+      <td><input type="text" name="edu-{{ i }}-{{ a }}" value="{{ e[a] if e else '' }}"></td>{% endfor %}</tr>
+    {% endfor %}
+  </table>
+  <p class="small muted">The first row is used as your current school. Leave the blank row empty or fill it to add another.</p>
+
+  <h2>Experience</h2>
+  <table class="rowform">
+    <tr><th>Company</th><th>Title</th><th>Location</th><th>Start</th><th>End</th><th>Summary</th></tr>
+    {% for e in profile.experience + [None] %}{% set i = loop.index0 %}
+    <tr>{% for a in ['company','title','location','start_date','end_date'] %}
+      <td><input type="text" name="exp-{{ i }}-{{ a }}" value="{{ e[a] if e else '' }}"></td>{% endfor %}
+      <td><textarea name="exp-{{ i }}-summary" style="min-height:38px">{{ e.summary if e else '' }}</textarea></td></tr>
+    {% endfor %}
+  </table>
+
+  <h2>Skills</h2>
+  <textarea name="skills" placeholder="One per line or comma-separated">{{ profile.skills | join(', ') }}</textarea>
+  <p class="small muted">Also used to rank jobs by how well they match you.</p>
+  <h3>Short bio</h3>
+  <textarea name="summary">{{ profile.summary }}</textarea>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">Common questions</h2>
+  <div class="grid">
+    {{ choice('work_authorized', 'Authorized to work in the US?', ['Yes', 'No']) }}
+    {{ choice('needs_sponsorship', 'Need visa sponsorship (now or future)?', ['Yes', 'No']) }}
+    {{ choice('willing_to_relocate', 'Willing to relocate?', ['Yes', 'No']) }}
+    {{ text('earliest_start', 'Earliest start date', 'May 2027') }}
+    {{ text('how_did_you_hear', 'How did you hear about us?') }}
+  </div>
+  <h3>Voluntary self-identification</h3>
+  <p class="small muted">Defaults to declining. Whatever you choose is used on every form that asks.</p>
+  <div class="grid">
+    {{ choice('gender', 'Gender', ['Decline to self-identify', 'Male', 'Female', 'Non-binary']) }}
+    {{ choice('race', 'Race', ['Decline to self-identify', 'American Indian or Alaska Native', 'Asian', 'Black or African American', 'Native Hawaiian or Other Pacific Islander', 'White', 'Two or More Races']) }}
+    {{ choice('hispanic_latino', 'Hispanic or Latino?', ['Decline to self-identify', 'Yes', 'No']) }}
+    {{ choice('veteran_status', 'Veteran status', ['Decline to self-identify', 'I am not a protected veteran', 'I identify as one or more of the classifications of protected veteran']) }}
+    {{ choice('disability_status', 'Disability', ['Decline to self-identify', "No, I don't have a disability", 'Yes, I have a disability (or previously had a disability)']) }}
+  </div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">Notes for Claude</h2>
+  <textarea name="writing_notes" placeholder="Projects to highlight, what you're looking for, tone…">{{ profile.writing_notes }}</textarea>
+  <details style="margin-top:10px"><summary>Resume text (extracted — fix it here if the PDF parsed badly)</summary>
+    <textarea name="resume_text" style="min-height:300px">{{ profile.resume_text }}</textarea>
+  </details>
+</div>
+<button class="primary">Save profile</button>
+</form>
+
+<h2 id="library">Answer library</h2>
+<p class="muted">Answers here are reused whenever a form asks a matching question (before asking Claude). Tick
+  “remember” on a review page to add answers from an application.</p>
+<form method="post" action="/profile/answers" class="card">
+  <table class="rowform">
+    <tr><th style="width:40%">Question</th><th>Answer</th><th style="width:60px">Delete</th></tr>
+    {% for a in library + [None, None] %}{% set i = loop.index0 %}
+      <tr><td><input type="text" name="q-{{ i }}" value="{{ a.question if a else '' }}"></td>
+          <td><textarea name="a-{{ i }}" style="min-height:38px">{{ a.answer if a else '' }}</textarea></td>
+          <td>{% if a %}<input type="checkbox" name="del-{{ i }}" value="1">{% endif %}</td></tr>
+    {% endfor %}
+  </table>
+  <button class="primary">Save answers</button>
+</form>
+{% endblock %}

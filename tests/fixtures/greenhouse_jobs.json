@@ -1,0 +1,8 @@
+{"jobs": [
+  {"id": 7001, "title": "Software Engineering Intern, Summer 2027", "updated_at": "2026-10-01T12:00:00-04:00",
+   "first_published": "2026-09-28T09:00:00-04:00", "location": {"name": "New York, NY"}, "company_name": "Acme",
+   "absolute_url": "https://acme.com/careers?gh_jid=7001",
+   "content": "&lt;p&gt;Build things with &lt;strong&gt;Python&lt;/strong&gt; and React.&lt;/p&gt;&lt;ul&gt;&lt;li&gt;SQL&lt;/li&gt;&lt;/ul&gt;"},
+  {"id": 7002, "title": "Senior Staff Engineer", "updated_at": "2026-10-01T12:00:00Z", "location": {"name": "Remote"},
+   "absolute_url": "https://job-boards.greenhouse.io/acme/jobs/7002", "content": "&lt;p&gt;Lead.&lt;/p&gt;"}
+]}

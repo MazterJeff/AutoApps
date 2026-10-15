@@ -1,0 +1,9 @@
+[
+ {"id": "s1", "company_name": "Acme", "title": "Software Engineering Intern, Summer 2027", "locations": ["New York, NY"],
+  "url": "https://job-boards.greenhouse.io/acme/jobs/7001", "date_posted": 1790000000, "active": true, "is_visible": true,
+  "sponsorship": "Offers Sponsorship", "terms": ["Summer 2027"]},
+ {"id": "s2", "company_name": "Globex", "title": "Quant Research Intern", "locations": ["Chicago, IL"],
+  "url": "https://globex.wd5.myworkdayjobs.com/en-US/Careers/job/Chicago/Quant-Intern_R123", "date_posted": 1790000000,
+  "active": true, "is_visible": true, "sponsorship": "U.S. Citizenship is Required", "terms": ["Summer 2027"]},
+ {"id": "s3", "company_name": "Closed Co", "title": "Intern", "locations": [], "url": "https://x.com", "active": false, "is_visible": true}
+]

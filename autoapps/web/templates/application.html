@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}{{ job.company }} · {{ job.title }}{% endblock %}
+{% block head %}{% if busy %}<meta http-equiv="refresh" content="4">{% endif %}{% endblock %}
+{% block content %}
+<p><a href="/applications">← Applications</a></p>
+<h1>{{ job.title }} <span class="muted">· {{ job.company }}</span></h1>
+<p><span class="pill {{ app.status }}">{{ STATUS_LABELS[app.status] }}</span>
+  <a href="{{ job.apply_url or job.url }}" target="_blank" rel="noopener" style="margin-left:10px">Application page ↗</a>
+  · <a href="/jobs/{{ job.id }}">Job description</a></p>
+{% if app.error %}<div class="flash warn">{{ app.error }}</div>{% endif %}
+
+{% if busy %}
+  <div class="card"><p>{{ 'Claude is drafting this application…' if app.status in ['queued', 'preparing'] else 'The browser is working on this application…' }}
+    This page refreshes automatically.</p></div>
+{% endif %}
+
+{% if app.fields %}
+<form method="post" action="/applications/{{ app.id }}/save">
+<div class="two">
+<div>
+  <div class="card">
+    <h2 style="margin-top:0">Form answers</h2>
+    <p class="small muted">Flagged answers need a look. Sources:
+      <span class="src">profile</span> from your profile, <span class="src">library</span> saved answers,
+      <span class="src ai">ai</span> drafted by Claude, <span class="src user">user</span> edited by you.</p>
+    {% for f in app.fields %}{% set i = loop.index0 %}
+    <div class="field {{ 'flag' if f.needs_review or (f.required and f.is_empty()) }}" id="f{{ i }}">
+      <label for="field-{{ i }}">{{ f.label or f.key }}{% if f.required %} <span class="req">*</span>{% endif %}
+        {% if f.source %}<span class="src {{ f.source }}">{{ f.source }}</span>{% endif %}</label>
+      {% if f.description %}<div class="small muted">{{ f.description|truncate(300) }}</div>{% endif %}
+
+      {% if f.type == 'file' %}
+        <div class="small">{% if f.value == RESUME_TOKEN %}📎 Your resume ({{ 'uploaded automatically' }})
+          {% elif f.value == COVER_TOKEN %}📎 Cover letter PDF (generated from the letter below)
+          {% else %}<span class="muted">You'll attach this one yourself in the browser.</span>{% endif %}</div>
+      {% elif f.value == COVER_TOKEN %}
+        <div class="small">Uses your <a href="#cover">cover letter</a> below.</div>
+      {% elif f.is_multi %}
+        {% for o in f.options %}<label class="inline"><input type="checkbox" name="field-{{ i }}" value="{{ o }}" {{ 'checked' if f.value and o in f.value }}> {{ o }}</label>{% endfor %}
+      {% elif f.options %}
+        <select id="field-{{ i }}" name="field-{{ i }}">
+          <option value="">— choose —</option>
+          {% for o in f.options %}<option {{ 'selected' if f.value == o }}>{{ o }}</option>{% endfor %}
+        </select>
+      {% elif f.type == 'checkbox' %}
+        <label class="inline"><input type="checkbox" name="field-{{ i }}" value="Yes" {{ 'checked' if f.value and f.value|lower in ['yes', 'true', 'on', '1'] }}> Yes</label>
+      {% elif f.type == 'textarea' or (f.value is string and f.value|length > 120) %}
+        <textarea id="field-{{ i }}" name="field-{{ i }}">{{ f.value or '' }}</textarea>
+      {% else %}
+        <input type="text" id="field-{{ i }}" name="field-{{ i }}" value="{{ f.value or '' }}">
+      {% endif %}
+
+      {% if f.note %}<div class="note">{{ f.note }}</div>{% endif %}
+      {% if f.type not in ['file'] and f.value != COVER_TOKEN %}
+      <div class="revise small">
+        {% if f.type == 'textarea' or (f.value is string and f.value|length > 120) %}
+          <input type="text" name="feedback-{{ i }}" placeholder="Ask Claude to change this answer (e.g. shorter, mention my robotics project)">
+          <button name="action" value="revise_field-{{ i }}">Revise</button>
+        {% endif %}
+        {% if f.source not in ['profile', 'library'] %}
+        <label class="inline" title="Save this answer to your library and reuse it on other applications"><input type="checkbox" name="remember" value="{{ i }}"> remember</label>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="card" id="cover">
+    <h2 style="margin-top:0">Cover letter</h2>
+    <textarea class="letter" name="cover_letter" placeholder="No cover letter. Write one here or ask Claude below.">{{ app.cover_letter }}</textarea>
+    <div class="revise">
+      <input type="text" name="letter_feedback" placeholder="Tell Claude what to change (e.g. more about my research, under 250 words)">
+      <button name="action" value="revise_letter">{{ 'Revise' if app.cover_letter else 'Write one' }}</button>
+    </div>
+    {% if app.cover_letter %}<p class="small">Download: <a href="/applications/{{ app.id }}/cover-letter.pdf">PDF</a> ·
+      <a href="/applications/{{ app.id }}/cover-letter.docx">Word</a> · <a href="/applications/{{ app.id }}/cover-letter.txt">Text</a></p>{% endif %}
+  </div>
+</div>
+
+<div>
+  <div class="card" style="position:sticky; top:68px">
+    <h2 style="margin-top:0">Hand it in</h2>
+    <button name="action" value="save" style="width:100%; margin-bottom:8px">Save edits</button>
+    {% if blockers %}<div class="note" style="margin-bottom:8px">{{ blockers|join(' ') }}</div>{% endif %}
+    <button name="action" value="submit_review" class="{{ 'primary' if settings.submit_mode == 'review' }}" style="width:100%; margin-bottom:6px" {{ 'disabled' if busy }}>Fill in browser, I'll click Submit</button>
+    <button name="action" value="submit_auto" class="{{ 'primary' if settings.submit_mode == 'auto' }}" style="width:100%" {{ 'disabled' if busy }}
+      onclick='return confirm({{ ("Fill the form and submit it to " ~ job.company ~ " now?")|tojson }})'>Fill &amp; submit automatically</button>
+    <p class="small muted">Both save your edits first. If a CAPTCHA or an unreadable question comes up, finish in the
+      browser window; the app detects the confirmation page.</p>
+    <hr style="border:0; border-top:1px solid var(--line)">
+    <button name="action" value="regenerate" style="width:100%; margin-bottom:6px" {{ 'disabled' if busy }}>Re-draft answers</button>
+    <label class="inline small"><input type="checkbox" name="new_letter" value="1"> also rewrite the cover letter</label>
+  </div>
+</div>
+</div>
+</form>
+{% endif %}
+
+<div class="toolbar">
+  {% if app.status != 'submitted' %}
+  <form method="post" action="/applications/{{ app.id }}/mark-submitted"><button>Mark as submitted</button></form>
+  {% endif %}
+  <form method="post" action="/applications/{{ app.id }}/delete" onsubmit="return confirm('Remove this application draft?')"><button class="danger">Delete draft</button></form>
+</div>
+
+{% if app.screenshots %}
+<h2>Screenshots</h2>
+<div class="card shots">{% for s in app.screenshots %}<a href="/applications/{{ app.id }}/screenshot/{{ loop.index0 }}" target="_blank"><img src="/applications/{{ app.id }}/screenshot/{{ loop.index0 }}" alt="screenshot {{ loop.index }}" loading="lazy"></a>{% endfor %}</div>
+{% endif %}
+<h2>Activity</h2>
+<pre class="log">{{ app.log|join('\n') }}</pre>
+{% endblock %}
