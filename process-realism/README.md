@@ -1,25 +1,23 @@
-# Process Trace: wing venation × pigment diffusion
+# Process Trace: wing texture
 
-A live, self-contained sketch (`butterfly.html`, no dependencies) that grows an abstracted
-swallowtail wing pattern from two simple processes, after a photo of a black butterfly with pale
-rays between its veins. Open the file in a browser.
+A live, self-contained sketch (`butterfly.html`, no dependencies). It takes only the texture of a
+swallowtail wing, the pale rays running between dark veins, and lets it grow across the whole
+screen in two flat tones. Open the file in a browser.
 
 **Rules**
 
-1. **Veins: space colonisation.** Attractor points sit just outside the wing margin. Each one pulls
-   only its nearest vein node, and a node pulled by several grows toward their average direction,
-   with a slight bias away from the wing base. When those attractors drift apart, the vein forks.
-   A tip stops when it reaches the margin. Growth starts from the discal cell, a closed loop near the root.
+1. **Veins: space colonisation.** Attractor points are scattered over the surface. Each one pulls
+   only its nearest vein node within reach. A node grows one step toward the average pull, keeps
+   heading away from where its vein started, and forks when the pulls on it diverge. Attractors
+   close to a vein are consumed, which keeps the veins evenly spaced.
 2. **Pigment: diffusion and decay.** A morphogen `u` is held at 1 on the veins, diffuses, and
-   decays (`du/dt = ∇²u − k·u`). The margin is no-flux. Each scale reads `u` through a band-pass rule:
-   high `u` (next to a vein) gives a dark scale, middle `u` gives a pale one, and low `u` (far from
-   every vein) gives dark again, which is the interveinal fold line. Near the root the veins are
-   crowded and `u` never falls far, so the wing stays black. Toward the margin the veins spread
-   apart, so the pale rays open up and split down the middle.
+   decays (`du/dt = ∇²u − u/λ²`). Each cell reads `u` through a band-pass rule: high `u` is dark,
+   middle `u` is pale, and low `u` is dark again. So every vein is a dark line inside a pale ray, and
+   where two veins drift apart the ray splits along a dark fold before the veins fork.
 
-**Where randomness enters:** attractor placement, wobble at vein tips, streaky noise added to `u`
-before it is read, and the mutation of a small genome each generation (vein counts, the decay
-length λ, the band thresholds, discal-cell jitter).
+The thresholds drift with a slow travelling wave, so the rays keep opening and closing.
 
-**Controls:** click or `n` for the next generation · `space` pause · `v` toggle the process view
-(the raw field `u`, veins and attractors) · `f` wing flutter · `i` invert · `s` save PNG.
+**Mouse**
+- **Click:** wounds the surface. Veins and pigment inside a disc are wiped, and a seed grows there
+  while the surrounding veins grow back in.
+- **Drag:** draws a vein, which sprouts side veins.

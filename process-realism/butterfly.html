@@ -3,552 +3,304 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Process Trace — Wing Venation × Pigment Diffusion</title>
+<title>Process Trace</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #f1f0ec; }
-  canvas { display: block; width: 100vw; height: 100vh; cursor: pointer; }
-  body.inv canvas { filter: invert(1); }
-  #hud {
-    position: fixed; left: 18px; bottom: 14px; pointer-events: none; user-select: none;
-    font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    color: #1a1a1a; letter-spacing: .02em; white-space: pre;
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #14181d; }
+  canvas { display: block; width: 100vw; height: 100vh; cursor: crosshair; touch-action: none; }
+  #hint {
+    position: fixed; left: 0; right: 0; bottom: 22px; text-align: center; pointer-events: none;
+    font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .3em;
+    color: #ddd5c3; opacity: .5; transition: opacity 2s;
   }
-  body.inv #hud { color: #e8e4d8; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="hud"></div>
+<div id="hint">CLICK · DRAG</div>
 <script>
 'use strict';
 // ---------------------------------------------------------------------------
-// Process trace: a butterfly wing as two simple processes layered together.
+// Process trace — the texture of a swallowtail wing, without the wing.
 //
-// 1. VEINS (space colonisation). Attractor points sit just outside the wing
-//    margin. Each attractor pulls only its nearest vein node; a node pulled by
-//    several attractors grows toward their average direction, and when those
-//    attractors drift apart the vein forks. A tip stops when it reaches the
-//    margin. Growth starts from the discal cell, the closed loop near the root.
+// VEINS   Attractor points are scattered over the whole surface. Each pulls
+//         only its nearest vein node within reach; a node grows one step
+//         toward the average pull, keeps heading away from where its vein
+//         started, and forks when the pulls on it diverge. Attractors close
+//         to a vein are consumed, which keeps the veins evenly spaced.
+// PIGMENT A morphogen u is held at 1 on the veins, diffuses and decays:
+//         du/dt = ∇²u − u/λ². Each cell reads u through a band-pass rule:
+//         high u → dark, middle u → pale, low u → dark again. So every vein
+//         is a dark line inside a pale ray, and where two veins drift apart
+//         the ray splits along a dark fold before the veins fork.
+// The thresholds drift with a slow wave, so the rays keep opening and closing.
 //
-// 2. PIGMENT (diffusion + decay). One morphogen u is held at 1 on the veins,
-//    leaks in from the wing edge, diffuses and decays:   du/dt = D∇²u − k·u
-//    Each scale reads its local u through a band-pass rule:
-//        u high  (next to a vein)        → dark scale
-//        u middle                        → pale scale
-//        u low   (far from every vein)   → dark again (the interveinal fold)
-//    Near the root the veins are crowded, u never falls far and the wing stays
-//    black. Toward the margin the veins spread apart, so the pale rays open up,
-//    widen and split down the middle. The tapering streaks fall out of that.
-//
-// Randomness enters where attractors sit, in tip wobble, in a streaky noise
-// added to u before it is read, and in the mutation between generations.
+// Mouse: click wounds the surface and plants a seed; drag draws a vein.
 // ---------------------------------------------------------------------------
 
-// ---------- grid ----------------------------------------------------------
-// Shapes are drawn in "reference photo" pixels (right half of a 1888×1080
-// photo, measured from the body midline) and mapped onto the simulation grid.
-const RES = 0.6;                       // grid cells per reference pixel
-const U = RES / 0.5;                   // constants below were tuned at RES 0.5
-const OY = 170;
-const GW = Math.round(760 * RES), GH = Math.round(775 * RES), N = GW * GH;
-const P = ([x, y]) => [x * RES, (y - OY) * RES];
+const CELL = 2;                  // css px per simulation cell
+const STEP = 1.3;                // vein growth step (cells)
+const KILL = 6;                  // attractors this close to a vein are consumed
+const REACH = 18;                // attractors pull veins only within this distance
+const DENSITY = 1 / 16;          // attractors per cell
+const RADIAL = 1.5;              // tips keep heading away from their origin
+const WOBBLE = 0.025;
+const LAMBDA = 5;                // pigment decay length (cells)
+const DT = 0.24, ITER = 12;
+const HI = 0.7, LO = 0.2, E = 0.03;
+const INK = [20, 24, 29], PAPER = [222, 214, 196];
+const CLICK_R = 90, DRAG_R = 34; // wound radii (cells)
 
-const STEP = 1.2 * U;                  // vein growth step
-const KILL = 3.5 * U;                  // attractor reached
-const DT = 0.24;                       // diffusion time step (D = 1)
-const ITER = 12;                       // diffusion iterations per frame
-const RADIAL = 0.55;                   // pull of vein tips away from the wing base
-const GROUND = 0.1;                    // starting level (reads as dark everywhere)
-const HOLD = 24;                       // seconds a finished wing is shown
-
-// ---------- small helpers --------------------------------------------------
 const rand = Math.random;
 const gauss = () => { let a = 0; while (!a) a = rand(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * rand()); };
-const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
 const smooth = (a, b, x) => { x = (x - a) / (b - a); x = x < 0 ? 0 : x > 1 ? 1 : x; return x * x * (3 - 2 * x); };
-const bez = (p0, c1, c2, p, t) => {
-  const m = 1 - t, a = m * m * m, b = 3 * m * m * t, c = 3 * m * t * t, d = t * t * t;
-  return [a * p0[0] + b * c1[0] + c * c2[0] + d * p[0], a * p0[1] + b * c1[1] + c * c2[1] + d * p[1]];
-};
 
-// ---------- wing definitions (reference-photo coordinates) -----------------
-// segs: [control1, control2, end, attractor range on this segment (t0,t1) | null]
-const FORE = {
-  start: [15, 235],
-  segs: [
-    [[200, 195], [560, 215], [736, 495], [0.42, 1]],   // leading edge → apex
-    [[650, 565], [430, 605], [300, 605], [0, 1]],      // outer margin → tornus
-    [[180, 600], [80, 585], [40, 560], [0, 0.75]],     // inner margin
-    [null, null, [15, 235], null],                     // along the body
-  ],
-  root: [20, 280],
-  cellUpper: [[22, 262], [120, 240], [240, 236], [360, 262], [470, 312]],
-  cellLower: [[30, 300], [120, 335], [230, 365], [340, 382], [410, 345], [470, 312]],
-};
-const HIND = {
-  start: [20, 470],
-  segs: [
-    [[150, 495], [280, 535], [335, 585], null],        // hidden under forewing
-    [[385, 700], [335, 845], [245, 905], [0, 1], 6],   // outer margin (scalloped)
-    [[175, 935], [100, 930], [55, 895], [0, 0.6], 2],  // lower margin
-    [[25, 760], [10, 600], [20, 470], null],
-  ],
-  root: [25, 500],
-  cellUpper: [[25, 490], [110, 510], [190, 550], [240, 615]],
-  cellLower: [[30, 535], [95, 590], [160, 640], [215, 655], [240, 615]],
-};
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const vc = document.createElement('canvas'), vg = vc.getContext('2d', { willReadFrequently: true });
+const hint = document.getElementById('hint');
 
-function outline(def) {
-  const pts = [], att = [];
-  let p0 = def.start;
-  for (const [c1, c2, p, r, scallops] of def.segs) {
-    const a = c1 || p0, b = c2 || p;
-    for (let k = pts.length ? 1 : 0; k <= 80; k++) {
-      const t = k / 80;
-      let q = bez(p0, a, b, p, t);
-      if (scallops) {                              // bumps between vein ends
-        const f = 1 - 0.03 * (1 - Math.abs(Math.sin(Math.PI * scallops * t)));
-        q = [def.root[0] + (q[0] - def.root[0]) * f, def.root[1] + (q[1] - def.root[1]) * f];
-      }
-      pts.push(P(q));
-      att.push(!!r && t >= r[0] && t <= r[1]);
+let GW, GH, N, u, u2, srcList, noise, img, BW, BH, buckets, nodes, atts, dirty, steps;
+
+function init() {
+  GW = Math.ceil(innerWidth / CELL); GH = Math.ceil(innerHeight / CELL); N = GW * GH;
+  cv.width = vc.width = GW; cv.height = vc.height = GH;
+  u = new Float32Array(N); u2 = new Float32Array(N); srcList = new Int32Array(0);
+  img = ctx.createImageData(GW, GH);
+  noise = makeNoise();
+  BW = Math.ceil(GW / REACH); BH = Math.ceil(GH / REACH);
+  buckets = Array.from({ length: BW * BH }, () => []);
+  nodes = []; atts = []; steps = 0; deadCount = 0;
+  vg.clearRect(0, 0, GW, GH);
+  scatter(GW / 2, GH / 2, Infinity);
+  addNode(GW / 2, GH / 2, -1, 0);
+  dirty = true;
+}
+
+// Smooth low-amplitude noise, so band edges are organic rather than ruled.
+function makeNoise() {
+  const out = new Float32Array(N);
+  for (const [scale, amp] of [[9, 0.02], [3, 0.008]]) {
+    const cw = Math.ceil(GW / scale) + 2, lat = Float32Array.from({ length: cw * (Math.ceil(GH / scale) + 2) }, rand);
+    for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+      const fx = x / scale, fy = y / scale, xi = fx | 0, yi = fy | 0;
+      let tx = fx - xi, ty = fy - yi; tx = tx * tx * (3 - 2 * tx); ty = ty * ty * (3 - 2 * ty);
+      const a = lat[yi * cw + xi], b = lat[yi * cw + xi + 1], c = lat[(yi + 1) * cw + xi], d = lat[(yi + 1) * cw + xi + 1];
+      out[y * GW + x] += amp * 2 * (a + (b - a) * tx + (c - a) * ty + (a - b - c + d) * tx * ty - 0.5);
     }
-    p0 = p;
-  }
-  return { pts, att };
-}
-
-function rasterMask(pts) {
-  const c = document.createElement('canvas'); c.width = GW; c.height = GH;
-  const g = c.getContext('2d');
-  g.beginPath(); pts.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); g.closePath(); g.fill();
-  const d = g.getImageData(0, 0, GW, GH).data, a = new Uint8Array(N);
-  for (let i = 0; i < N; i++) a[i] = d[i * 4 + 3];
-  return a;
-}
-
-const wings = [
-  { def: FORE, id: 1 },
-  { def: HIND, id: 2 },
-];
-for (const w of wings) {
-  w.o = outline(w.def);
-  w.mask = rasterMask(w.o.pts);
-  w.root = P(w.def.root);
-}
-const inside = (w, x, y) => {
-  const xi = x | 0, yi = y | 0;
-  return xi >= 0 && yi >= 0 && xi < GW && yi < GH && w.mask[yi * GW + xi] >= 128;
-};
-
-// region: 1 forewing, 2 hindwing (forewing lies on top), 0 outside
-const reg = new Uint8Array(N), cov = new Uint8Array(N);
-for (let i = 0; i < N; i++) {
-  const f = wings[0].mask[i], h = wings[1].mask[i];
-  reg[i] = f >= 128 ? 1 : h >= 128 ? 2 : 0;
-  cov[i] = Math.max(f, h);
-}
-const drawCells = [];
-for (let y = 1; y < GH - 1; y++) for (let x = 1; x < GW - 1; x++) if (cov[y * GW + x]) drawCells.push(y * GW + x);
-const DRAW = Int32Array.from(drawCells);
-
-// ---------- streak noise, sampled in polar coordinates around each root ----
-const TW = 512, TH = 64, tab = new Float32Array(TW * TH).map(() => rand());
-const fine = new Float32Array(N).map(() => rand());
-const thA = new Float32Array(N), rA = new Float32Array(N), baseA = new Float32Array(N);
-for (const i of DRAW) {
-  const w = wings[(reg[i] || 1) - 1], x = i % GW, y = (i / GW) | 0;
-  const dx = x - w.root[0], dy = y - w.root[1];
-  thA[i] = (Math.atan2(dy, dx) + Math.PI) * 42;    // ≈ 42 streaks per radian
-  rA[i] = Math.hypot(dx, dy) / (34 * U);
-  baseA[i] = smooth(70 * RES, 210 * RES, Math.hypot(dx, dy));   // wing base stays dark
-}
-function vnoise(x, y) {
-  const xi = Math.floor(x), yi = Math.floor(y);
-  let fx = x - xi, fy = y - yi;
-  fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
-  const x0 = ((xi % TW) + TW) % TW, x1 = (x0 + 1) % TW;
-  const y0 = ((yi % TH) + TH) % TH, y1 = (y0 + 1) % TH;
-  const a = tab[y0 * TW + x0], b = tab[y0 * TW + x1], c = tab[y1 * TW + x0], d = tab[y1 * TW + x1];
-  return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
-}
-
-// ---------- genome: the handful of numbers each generation inherits -------
-const BASE = { nF: 22, nH: 9, lamF: 8, lamH: 7, hiF: 0.7, loF: 0.27, hiH: 0.42, loH: 0.16, wob: 0.12, cellJit: 5 };
-const LIMITS = {
-  nF: [15, 28], nH: [6, 12], lamF: [6, 10.5], lamH: [5, 9], hiF: [0.6, 0.8], loF: [0.18, 0.34],
-  hiH: [0.32, 0.52], loH: [0.1, 0.22], wob: [0.02, 0.3], cellJit: [0, 12],
-};
-function mutate(p) {
-  const q = {};
-  for (const k in BASE) {
-    let v = p[k] * (1 + gauss() * 0.09);
-    v += (BASE[k] - v) * 0.2;                      // gentle pull back toward the species
-    q[k] = clamp(v, ...LIMITS[k]);
-  }
-  q.nF = Math.round(clamp(p.nF + gauss() * 1.3, ...LIMITS.nF));
-  q.nH = Math.round(clamp(p.nH + gauss() * 0.9, ...LIMITS.nH));
-  q.hiF = Math.max(q.hiF, q.loF + 0.32);            // keep the pale band open
-  q.hiH = Math.max(q.hiH, q.loH + 0.2);
-  return q;
-}
-
-// ---------- vein growth -----------------------------------------------------
-function chaikinResample(poly, step) {
-  let p = poly;
-  for (let r = 0; r < 2; r++) {
-    const q = [p[0]];
-    for (let i = 0; i < p.length - 1; i++) {
-      const a = p[i], b = p[i + 1];
-      q.push([0.75 * a[0] + 0.25 * b[0], 0.75 * a[1] + 0.25 * b[1]], [0.25 * a[0] + 0.75 * b[0], 0.25 * a[1] + 0.75 * b[1]]);
-    }
-    q.push(p[p.length - 1]); p = q;
-  }
-  const out = [p[0]];
-  let acc = 0;
-  for (let i = 1; i < p.length; i++) {
-    let a = p[i - 1];
-    const b = p[i];
-    let seg = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    while (acc + seg >= step) {
-      const f = (step - acc) / seg, q = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
-      out.push(q); a = q; seg = Math.hypot(b[0] - a[0], b[1] - a[1]); acc = 0;
-    }
-    acc += seg;
-  }
-  out.push(p[p.length - 1]);
-  return out;
-}
-
-function placeAttractors(w, n) {
-  const { pts, att } = w.o, run = [];
-  att.forEach((f, i) => f && run.push(i));
-  const s = [0];
-  for (let k = 1; k < run.length; k++) {
-    const a = pts[run[k - 1]], b = pts[run[k]];
-    s.push(s[k - 1] + Math.hypot(b[0] - a[0], b[1] - a[1]));
-  }
-  const L = s[s.length - 1], out = [];
-  for (let j = 0; j < n; j++) {
-    const target = clamp(L * (j + 0.5 + (rand() - 0.5) * 0.45) / n, 0, L);
-    let k = 1;
-    while (k < s.length - 1 && s[k] < target) k++;
-    const f = (target - s[k - 1]) / (s[k] - s[k - 1] || 1);
-    const a = pts[run[k - 1]], b = pts[run[k]];
-    let x = a[0] + (b[0] - a[0]) * f, y = a[1] + (b[1] - a[1]) * f;
-    let nx = b[1] - a[1], ny = a[0] - b[0];
-    const l = Math.hypot(nx, ny) || 1; nx /= l; ny /= l;
-    if (inside(w, x + nx * 3, y + ny * 3)) { nx = -nx; ny = -ny; }   // point the normal outward
-    x += nx * 3 * U; y += ny * 3 * U;
-    out.push({ x, y, alive: true });
   }
   return out;
 }
 
-function seedWing(w, nAtt, jit) {
-  const moved = new Map();
-  const j = p => {                                // same jitter for shared points
-    const key = p.join(',');
-    if (!moved.has(key)) moved.set(key, [p[0] + gauss() * jit, p[1] + gauss() * jit]);
-    return moved.get(key);
-  };
-  const jitter = (poly) => poly.map((p, i) => P(i ? j(p) : p));
-  w.chains = [chaikinResample(jitter(w.def.cellUpper), STEP), chaikinResample(jitter(w.def.cellLower), STEP)];
-  w.chainPos = [0, 0];
-  w.chainLast = [-1, -1];
-  w.nodes = [];
-  w.atts = placeAttractors(w, nAtt);
+// ---------- veins ------------------------------------------------------------
+const bucketOf = (x, y) => Math.min(BH - 1, Math.max(0, (y / REACH) | 0)) * BW + Math.min(BW - 1, Math.max(0, (x / REACH) | 0));
+
+// origin: the point this vein keeps heading away from (defaults to the node itself).
+function addNode(x, y, parent, width, origin, stroke = 0) {
+  const k = nodes.length;
+  const n = { x, y, p: parent, w: width || 2.4, dead: false, stroke, kids: 0 };
+  n.ox = origin === undefined ? x : origin[0];
+  n.oy = origin === undefined ? y : origin[1];
+  nodes.push(n);
+  buckets[bucketOf(x, y)].push(k);
+  if (parent >= 0) drawSegment(nodes[parent], n);
+  return k;
 }
 
-function growCell(w, progress) {
-  for (let c = 0; c < 2; c++) {
-    const chain = w.chains[c], target = Math.ceil(progress * chain.length);
-    while (w.chainPos[c] < target) {
-      const [x, y] = chain[w.chainPos[c]++];
-      w.nodes.push({ x, y, p: w.chainLast[c], w: 2.0 * U });
-      w.chainLast[c] = w.nodes.length - 1;
-    }
+function drawSegment(a, b) {
+  vg.strokeStyle = '#fff'; vg.lineCap = 'round'; vg.lineWidth = b.w;
+  vg.beginPath(); vg.moveTo(a.x, a.y); vg.lineTo(b.x, b.y); vg.stroke();
+  dirty = true;
+}
+
+function scatter(cx, cy, r) {
+  const all = r === Infinity;
+  for (const a of atts) if (all || (a.x - cx) ** 2 + (a.y - cy) ** 2 < r * r) a.alive = false;
+  const count = Math.round((all ? N : Math.PI * r * r) * DENSITY);
+  for (let k = 0; k < count; k++) {
+    let x, y;
+    if (all) { x = rand() * GW; y = rand() * GH; }
+    else { const a = rand() * 2 * Math.PI, d = r * Math.sqrt(rand()); x = cx + Math.cos(a) * d; y = cy + Math.sin(a) * d; }
+    if (x >= 0 && y >= 0 && x < GW && y < GH) atts.push({ x, y, alive: true });
   }
 }
 
-// One space-colonisation step. Returns true while anything is still growing.
-function growVeins(w, wob) {
-  const pulls = new Map();
-  for (const a of w.atts) {
+function grow() {
+  const pulls = new Map(), R2 = REACH * REACH, K2 = KILL * KILL;
+  for (const a of atts) {
     if (!a.alive) continue;
-    let best = -1, bd = Infinity;
-    for (let k = 0; k < w.nodes.length; k++) {
-      const n = w.nodes[k], d = (n.x - a.x) ** 2 + (n.y - a.y) ** 2;
-      if (d < bd) { bd = d; best = k; }
+    const bx = (a.x / REACH) | 0, by = (a.y / REACH) | 0;
+    let best = -1, bd = R2;
+    for (let j = by - 1; j <= by + 1; j++) {
+      if (j < 0 || j >= BH) continue;
+      for (let i = bx - 1; i <= bx + 1; i++) {
+        if (i < 0 || i >= BW) continue;
+        for (const k of buckets[j * BW + i]) {
+          const n = nodes[k], d = (n.x - a.x) ** 2 + (n.y - a.y) ** 2;
+          if (d < bd) { bd = d; best = k; }
+        }
+      }
     }
-    if (bd < KILL * KILL) { a.alive = false; continue; }
-    const n = w.nodes[best], d = Math.sqrt(bd);
+    if (best < 0) continue;
+    if (bd < K2) { a.alive = false; continue; }
+    const n = nodes[best], d = Math.sqrt(bd);
     let e = pulls.get(best);
     if (!e) pulls.set(best, e = { x: 0, y: 0, list: [] });
     e.x += (a.x - n.x) / d; e.y += (a.y - n.y) / d; e.list.push(a);
   }
   for (const [k, e] of pulls) {
-    const n = w.nodes[k];
-    let dx = e.x, dy = e.y;
-    if (Math.hypot(dx, dy) < 0.1) { const a = e.list[0]; dx = a.x - n.x; dy = a.y - n.y; }
-    let l = Math.hypot(dx, dy); dx /= l; dy /= l;
-    const rx = n.x - w.root[0], ry = n.y - w.root[1], rl = Math.hypot(rx, ry) || 1;
-    dx += RADIAL * rx / rl + gauss() * wob;        // veins fan out from the wing base
-    dy += RADIAL * ry / rl + gauss() * wob;
-    l = Math.hypot(dx, dy);
-    const x = n.x + dx / l * STEP, y = n.y + dy / l * STEP;
-    w.nodes.push({ x, y, p: k, w: Math.max(1.15 * U, n.w * 0.994) });
-    if (!inside(w, x, y)) for (const a of e.list) a.alive = false;   // tip left the wing
-  }
-  return pulls.size > 0;
-}
-
-// ---------- vein raster → pigment sources -----------------------------------
-const vc = document.createElement('canvas'); vc.width = GW; vc.height = GH;
-const vg = vc.getContext('2d', { willReadFrequently: true });
-function rasterVeins() {
-  vg.globalCompositeOperation = 'source-over';
-  vg.clearRect(0, 0, GW, GH);
-  vg.globalCompositeOperation = 'lighter';
-  vg.lineCap = 'round';
-  for (const w of wings) {
-    vg.strokeStyle = w.id === 1 ? '#f00' : '#0f0';
-    for (const n of w.nodes) {
-      if (n.p < 0) continue;
-      const q = w.nodes[n.p];
-      vg.lineWidth = n.w;
-      vg.beginPath(); vg.moveTo(q.x, q.y); vg.lineTo(n.x, n.y); vg.stroke();
+    const n = nodes[k];
+    let l = Math.hypot(e.x, e.y) || 1, dx = e.x / l, dy = e.y / l;
+    const px = dx, py = dy;
+    const rx = n.x - n.ox, ry = n.y - n.oy, rl = Math.hypot(rx, ry);
+    if (rl > 0) { dx += RADIAL * rx / rl; dy += RADIAL * ry / rl; }
+    dx += gauss() * WOBBLE; dy += gauss() * WOBBLE;
+    l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+    const x = n.x + dx * STEP, y = n.y + dy * STEP;
+    // A node forks at most once, and never grows away from what pulls it;
+    // attractors it can't serve are dropped (else it would sprout every step).
+    if (n.kids >= 2 || dx * px + dy * py < 0.3 || x < 0 || y < 0 || x >= GW || y >= GH) {
+      for (const a of e.list) a.alive = false;
+      continue;
     }
+    n.kids++;
+    addNode(x, y, k, Math.max(1.1, n.w * 0.995), [n.ox, n.oy]);
   }
-  const d = vg.getImageData(0, 0, GW, GH).data;
-  for (const w of wings) {
-    const ch = w.id === 1 ? 0 : 1, list = [];
-    w.src.fill(0);
-    for (const i of w.cells) if (d[i * 4 + ch] > 90) { list.push(i); w.src[i] = 1; }
-    w.srcList = Int32Array.from(list);
-  }
+  if (++steps % 40 === 0) atts = atts.filter(a => a.alive);
 }
 
-// ---------- pigment diffusion ----------------------------------------------
-// Each wing keeps its own field. The ring of cells just outside the wing
-// mirrors its inside neighbour after every iteration (a no-flux margin), so
-// iso-lines of u meet the edge at right angles and the pale rays run out to it.
-for (const w of wings) {
-  const list = [], ringO = [], ringI = [], m = w.mask;
-  for (let y = 1; y < GH - 1; y++) for (let x = 1; x < GW - 1; x++) {
-    const i = y * GW + x;
-    if (m[i] >= 128) { list.push(i); continue; }
-    for (const j of [i - 1, i + 1, i - GW, i + GW]) if (m[j] >= 128) { ringO.push(i); ringI.push(j); break; }
-  }
-  w.cells = Int32Array.from(list);
-  w.ringO = Int32Array.from(ringO); w.ringI = Int32Array.from(ringI);
-  w.u = new Float32Array(N).fill(GROUND);
-  w.u2 = new Float32Array(N).fill(GROUND);
-  w.src = new Uint8Array(N);
-  w.srcList = new Int32Array(0);
+// Drop wiped nodes once they pile up, re-indexing parents and buckets.
+let deadCount = 0;
+function compact() {
+  const map = new Int32Array(nodes.length).fill(-1), kept = [];
+  nodes.forEach((n, k) => { if (!n.dead) { map[k] = kept.length; kept.push(n); } });
+  for (const n of kept) n.p = n.p >= 0 ? map[n.p] : -1;
+  nodes = kept;
+  for (let b = 0; b < buckets.length; b++) buckets[b] = buckets[b].map(k => map[k]).filter(k => k >= 0);
+  if (down) { down.last = map[down.last]; down.list = down.list.map(k => map[k]).filter(k => k >= 0); }
+  deadCount = 0;
 }
 
-// Distance (in cells) to the nearest wing edge, for a thin dark rim.
-const edgeD = new Float32Array(N).fill(1e9);
-for (let y = 1; y < GH - 1; y++) for (let x = 1; x < GW - 1; x++) {
-  const i = y * GW + x, r = reg[i];
-  if (!r || reg[i - 1] !== r || reg[i + 1] !== r || reg[i - GW] !== r || reg[i + GW] !== r) edgeD[i] = 0;
-}
-for (let pass = 0; pass < 2; pass++) {             // two-pass chamfer transform
-  const fwd = pass === 0, y0 = fwd ? 1 : GH - 2, y1 = fwd ? GH - 1 : 0, dy = fwd ? 1 : -1;
-  for (let y = y0; y !== y1; y += dy) for (let x = fwd ? 1 : GW - 2; fwd ? x < GW - 1 : x > 0; x += dy) {
-    const i = y * GW + x, a = fwd ? -1 : 1, b = fwd ? -GW : GW;
-    edgeD[i] = Math.min(edgeD[i], edgeD[i + a] + 1, edgeD[i + b] + 1, edgeD[i + a + b] + 1.414, edgeD[i - a + b] + 1.414);
-  }
+function readSources() {
+  const d = vg.getImageData(0, 0, GW, GH).data, list = [];
+  for (let i = 0; i < N; i++) if (d[i * 4 + 3] > 90) list.push(i);
+  srcList = Int32Array.from(list);
+  dirty = false;
 }
 
-function diffuse(w, k, dissolve) {
-  const C = w.cells, S = w.srcList, a = 1 - 4 * DT - DT * k;
-  let u = w.u, u2 = w.u2;
-  if (dissolve) for (let c = 0; c < C.length; c++) { const i = C[c]; u[i] += (GROUND - u[i]) * dissolve; }
+// A wound: veins, pigment and spent attractors inside the disc are wiped,
+// fresh attractors are scattered, and the surrounding veins grow back in.
+function wound(cx, cy, r, keepStroke) {
+  const x0 = Math.max(0, ((cx - r) / REACH) | 0), x1 = Math.min(BW - 1, ((cx + r) / REACH) | 0);
+  const y0 = Math.max(0, ((cy - r) / REACH) | 0), y1 = Math.min(BH - 1, ((cy + r) / REACH) | 0);
+  for (let j = y0; j <= y1; j++) for (let i = x0; i <= x1; i++) {
+    const b = buckets[j * BW + i];
+    for (const k of b) {
+      const n = nodes[k];
+      if (n.stroke !== keepStroke && (n.x - cx) ** 2 + (n.y - cy) ** 2 < r * r) {
+        n.dead = true; deadCount++;
+        if (n.p >= 0) nodes[n.p].kids--;           // the parent may branch again
+      }
+    }
+    buckets[j * BW + i] = b.filter(k => !nodes[k].dead);
+  }
+  vg.save(); vg.globalCompositeOperation = 'destination-out';
+  vg.beginPath(); vg.arc(cx, cy, r, 0, 2 * Math.PI); vg.fill(); vg.restore();
+  const ya = Math.max(0, (cy - r) | 0), yb = Math.min(GH - 1, (cy + r) | 0);
+  for (let y = ya; y <= yb; y++) {
+    const h = Math.sqrt(Math.max(0, r * r - (y - cy) ** 2));
+    for (let x = Math.max(0, (cx - h) | 0); x <= Math.min(GW - 1, (cx + h) | 0); x++) u[y * GW + x] = 0;
+  }
+  scatter(cx, cy, r);
+  dirty = true;
+}
+
+// ---------- pigment ----------------------------------------------------------
+function diffuse() {
+  const a = 1 - 4 * DT - DT / (LAMBDA * LAMBDA), S = srcList;
   for (let it = 0; it < ITER; it++) {
-    for (let c = 0; c < C.length; c++) {
-      const i = C[c];
-      u2[i] = a * u[i] + DT * (u[i - 1] + u[i + 1] + u[i - GW] + u[i + GW]);
+    for (let y = 1; y < GH - 1; y++) {
+      let i = y * GW + 1;
+      for (let x = 1; x < GW - 1; x++, i++) u2[i] = a * u[i] + DT * (u[i - 1] + u[i + 1] + u[i - GW] + u[i + GW]);
     }
     for (let c = 0; c < S.length; c++) u2[S[c]] = 1;
-    for (let c = 0; c < w.ringO.length; c++) u2[w.ringO[c]] = u2[w.ringI[c]];
+    for (let x = 0; x < GW; x++) { u2[x] = u2[x + GW]; u2[N - GW + x] = u2[N - 2 * GW + x]; }   // no-flux borders
+    for (let y = 0; y < GH; y++) { u2[y * GW] = u2[y * GW + 1]; u2[y * GW + GW - 1] = u2[y * GW + GW - 2]; }
     const t = u; u = u2; u2 = t;
   }
-  w.u = u; w.u2 = u2;
 }
 
-// ---------- drawing ---------------------------------------------------------
-const cv = document.getElementById('c'), ctx = cv.getContext('2d');
-const hud = document.getElementById('hud');
-const wc = document.createElement('canvas'); wc.width = 2 * GW; wc.height = GH;
-const wg = wc.getContext('2d');
-const img = wg.createImageData(2 * GW, GH), px = img.data;
-
-const bc = document.createElement('canvas'); bc.width = 192; bc.height = 108;
-const bgc = bc.getContext('2d');
-const blobs = [];
-for (let k = 0; k < 9; k++) blobs.push({ x: rand(), y: rand(), r: 0.12 + rand() * 0.22, v: 175 + rand() * 50, ph: rand() * 6.28, sp: 0.02 + rand() * 0.04 });
-blobs.push({ x: -0.02, y: 0.45, r: 0.16, v: 25, ph: 1, sp: 0.02 }, { x: 0.98, y: 0.98, r: 0.2, v: 30, ph: 2, sp: 0.015 }, { x: 0.05, y: 0.8, r: 0.14, v: 40, ph: 4, sp: 0.02 });
-
-let grain;
-function makeGrain() {
-  const g = document.createElement('canvas'); g.width = g.height = 256;
-  const gx = g.getContext('2d'), d = gx.createImageData(256, 256);
-  for (let i = 0; i < d.data.length; i += 4) { const v = rand() * 255; d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = 255; }
-  gx.putImageData(d, 0, 0);
-  grain = ctx.createPattern(g, 'repeat');
-}
-
-let W = 0, H = 0, dpr = 1;
-function resize() {
-  dpr = Math.min(window.devicePixelRatio || 1, 2);
-  W = cv.width = Math.round(innerWidth * dpr);
-  H = cv.height = Math.round(innerHeight * dpr);
-  makeGrain();
-}
-addEventListener('resize', resize);
-resize();
-
-function drawBackground(t) {
-  bgc.fillStyle = '#f3f2ee'; bgc.fillRect(0, 0, bc.width, bc.height);
-  for (const b of blobs) {
-    const x = (b.x + 0.04 * Math.sin(t * b.sp * 6 + b.ph)) * bc.width;
-    const y = (b.y + 0.03 * Math.cos(t * b.sp * 5 + b.ph)) * bc.height;
-    const r = b.r * bc.width, g = bgc.createRadialGradient(x, y, 0, x, y, r), v = b.v | 0;
-    g.addColorStop(0, `rgba(${v},${v},${v - 3},0.85)`); g.addColorStop(1, `rgba(${v},${v},${v},0)`);
-    bgc.fillStyle = g; bgc.fillRect(0, 0, bc.width, bc.height);
-  }
-  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(bc, 0, 0, W, H);
-}
-
-function drawBody(g) {
-  const cx = GW, y = v => (v - OY) * RES, s = RES;
-  let gr = g.createLinearGradient(cx - 9 * s, 0, cx + 9 * s, 0);
-  gr.addColorStop(0, '#2b2b2a'); gr.addColorStop(0.5, '#a9a8a3'); gr.addColorStop(1, '#2b2b2a');
-  g.fillStyle = gr;                                // pale abdomen
-  g.beginPath(); g.ellipse(cx, y(720), 10 * s, 190 * s, 0, 0, 7); g.fill();
-  g.fillStyle = '#070707';                         // thorax
-  g.beginPath(); g.ellipse(cx, y(370), 22 * s, 170 * s, 0, 0, 7); g.fill();
-  g.fillStyle = '#1a1a1a';
-  g.beginPath(); g.ellipse(cx, y(205), 16 * s, 16 * s, 0, 0, 7); g.fill();
-  g.fillStyle = '#d8d7d2';                         // small pale marks on the head
-  for (const dx of [-7, 0, 7]) { g.beginPath(); g.arc(cx + dx * s, y(196), 2.6 * s, 0, 7); g.fill(); }
-}
-
-function renderWings(t, p) {
-  const breathe = Math.sin(t * 0.5), b2 = Math.sin(t * 0.37 + 1);
-  const hi = [0, p.hiF * (1 + 0.07 * breathe), p.hiH * (1 + 0.1 * breathe)];
-  const lo = [0, p.loF * (1 + 0.22 * b2), p.loH * (1 + 0.25 * b2)];
-  const PALE = [0, 212, 58], DARK = 9, E = 0.035, NA = 0.11;
-  const drift = t * 0.06, sway = Math.sin(t * 0.21) * 0.6;
-  const W2 = 2 * GW * 4, fw = wings[0], hw = wings[1];
-  for (let k = 0; k < DRAW.length; k++) {
-    const i = DRAW[k], r = reg[i], w = r === 2 ? hw : fw, uv = w.u[i];
-    const nz = 0.65 * vnoise(thA[i] + sway, rA[i] - drift) + 0.35 * vnoise(thA[i] * 2.3 + 17, rA[i] * 2.7 - drift * 1.7);
-    let R, G, B;
-    if (!r) { R = G = B = DARK; }
-    else if (view === 1) {                         // the process: field + veins
-      if (w.src[i]) { R = 255; G = 96; B = 32; }
-      else { R = G = B = 18 + 230 * (1 - clamp(uv, 0, 1)); }
-    } else {
-      const v = uv + NA * (nz - 0.5);
-      const pale = smooth(lo[r] - E, lo[r] + E, v) * (1 - smooth(hi[r] - E, hi[r] + E, v)) * baseA[i] * smooth(2.5 * U, 6 * U, edgeD[i]);
-      R = G = B = DARK + (PALE[r] * (0.72 + 0.5 * nz) - DARK) * pale + fine[i] * 7;
-    }
-    const x = i % GW, y = (i / GW) | 0, a = cov[i];
-    let o = y * W2 + (GW + x) * 4;
-    px[o] = R; px[o + 1] = G; px[o + 2] = B; px[o + 3] = a;
-    o = y * W2 + (GW - 1 - x) * 4;
-    px[o] = R; px[o + 1] = G; px[o + 2] = B; px[o + 3] = a;
-  }
-  wg.putImageData(img, 0, 0);
-  drawBody(wg);
-  if (view === 1) {                                // attractors, mirrored
-    for (const w of wings) for (const a of w.atts) {
-      wg.fillStyle = a.alive ? '#ff6020' : 'rgba(255,96,32,.35)';
-      for (const x of [GW + a.x, GW - a.x]) { wg.beginPath(); wg.arc(x, a.y, 2.2 * U, 0, 7); wg.fill(); }
+// ---------- drawing ----------------------------------------------------------
+let colS, colC, rowS, rowC;
+function render(t) {
+  if (!colS || colS.length !== GW) { colS = new Float32Array(GW); colC = new Float32Array(GW); }
+  if (!rowS || rowS.length !== GH) { rowS = new Float32Array(GH); rowC = new Float32Array(GH); }
+  const ph = t * 0.35;                             // slow wave: sin(kx·x + ky·y + ph)
+  for (let x = 0; x < GW; x++) { colS[x] = Math.sin(x * 0.011 + ph); colC[x] = Math.cos(x * 0.011 + ph); }
+  for (let y = 0; y < GH; y++) { rowS[y] = Math.sin(y * 0.007); rowC[y] = Math.cos(y * 0.007); }
+  const d = img.data, dr = PAPER[0] - INK[0], dg = PAPER[1] - INK[1], db = PAPER[2] - INK[2];
+  for (let y = 0, i = 0; y < GH; y++) {
+    const rs = rowS[y], rc = rowC[y];
+    for (let x = 0; x < GW; x++, i++) {
+      const w1 = colS[x] * rc + colC[x] * rs, w2 = colC[x] * rc - colS[x] * rs;
+      const hi = HI * (1 + 0.08 * w1), lo = LO * (1 + 0.35 * w2);
+      const v = u[i] + noise[i];
+      const p = smooth(lo - E, lo + E, v) * (1 - smooth(hi - E, hi + E, v));
+      const o = i * 4;
+      d[o] = INK[0] + dr * p; d[o + 1] = INK[1] + dg * p; d[o + 2] = INK[2] + db * p; d[o + 3] = 255;
     }
   }
+  ctx.putImageData(img, 0, 0);
 }
 
-// ---------- life cycle -----------------------------------------------------
-let params = { ...BASE }, gen = 0, phase = 'cell', phaseT = 0, t = 0, sinceGen = 0;
-let paused = false, flutter = true, view = 0;
+// ---------- mouse ------------------------------------------------------------
+let stroke = 0, down = null;
+const toGrid = e => [e.clientX / CELL, e.clientY / CELL];
 
-function newGeneration() {
-  if (gen > 0) params = mutate(params);
-  gen++;
-  seedWing(wings[0], params.nF, params.cellJit * RES);
-  seedWing(wings[1], params.nH, params.cellJit * RES);
-  phase = 'cell'; phaseT = 0; sinceGen = 0;
-  rasterVeins();
-}
-
-function step() {
-  phaseT++; sinceGen++;
-  if (phase === 'cell') {
-    const pr = Math.min(1, phaseT / 70);
-    for (const w of wings) growCell(w, pr);
-    if (pr >= 1) { phase = 'veins'; phaseT = 0; }
-    rasterVeins();
-  } else if (phase === 'veins') {
-    let growing = false;
-    for (const w of wings) growing = growVeins(w, params.wob) || growing;
-    rasterVeins();
-    if (!growing || phaseT > 1200) { phase = 'pigment'; phaseT = 0; }
-  } else if (phase === 'pigment') {
-    if (phaseT > 150) { phase = 'hold'; phaseT = 0; }
-  } else if (phase === 'hold' && phaseT > HOLD * 60) newGeneration();
-  const dissolve = sinceGen < 90 ? 0.08 : 0;
-  diffuse(wings[0], 1 / (params.lamF * U) ** 2, dissolve);
-  diffuse(wings[1], 1 / (params.lamH * U) ** 2, dissolve);
-}
-
-function frame() {
-  if (!paused) { step(); t += 1 / 60; }
-  drawBackground(t);
-  renderWings(t, params);
-  const s = Math.min(W * 0.9 / (2 * GW), H * 0.86 / GH);
-  const open = flutter ? 1 - 0.16 * Math.pow(0.5 - 0.5 * Math.cos(t * 0.75), 4) : 1;
-  ctx.save();
-  ctx.translate(W / 2, H / 2 + (1 - open) * 20 * dpr);
-  ctx.scale(s * open, s);
-  ctx.drawImage(wc, -GW, -GH / 2);
-  ctx.restore();
-  ctx.save();                                      // film grain
-  ctx.globalAlpha = 0.09;
-  ctx.translate((rand() * 256) | 0, (rand() * 256) | 0);
-  ctx.fillStyle = grain; ctx.fillRect(-256, -256, W + 512, H + 512);
-  ctx.restore();
-  if ((sinceGen & 7) === 0 || paused) updateHud();
-  requestAnimationFrame(frame);
-}
-
-function updateHud() {
-  const f = n => n.toFixed(2);
-  const label = { cell: 'discal cell forming', veins: 'veins growing toward margin', pigment: 'pigment diffusing', hold: 'settled' }[phase];
-  hud.textContent =
-    `PROCESS TRACE — venation × pigment diffusion\n` +
-    `generation ${gen} · ${paused ? 'paused' : label}\n` +
-    `veins ${params.nF}/${params.nH}  λ ${f(params.lamF)}/${f(params.lamH)}  band ${f(params.loF)}–${f(params.hiF)}\n` +
-    `[click] next generation  [space] pause  [v] ${view ? 'pattern' : 'process'} view  [f] flutter  [i] invert  [s] save`;
-}
-
-cv.addEventListener('click', newGeneration);
-addEventListener('keydown', e => {
-  const k = e.key.toLowerCase();
-  if (k === ' ') { paused = !paused; e.preventDefault(); }
-  else if (k === 'r' || k === 'n') newGeneration();
-  else if (k === 'v') view ^= 1;
-  else if (k === 'f') flutter = !flutter;
-  else if (k === 'i') document.body.classList.toggle('inv');
-  else if (k === 's') { const a = document.createElement('a'); a.download = `wing-gen${gen}.png`; a.href = cv.toDataURL('image/png'); a.click(); }
-  updateHud();
+cv.addEventListener('pointerdown', e => {
+  cv.setPointerCapture(e.pointerId);
+  hint.style.opacity = 0;
+  const [x, y] = toGrid(e);
+  stroke++;
+  wound(x, y, DRAG_R, stroke);
+  down = { x, y, sx: x, sy: y, last: addNode(x, y, -1, 2.6, undefined, stroke), list: [] };
 });
 
-newGeneration();
+cv.addEventListener('pointermove', e => {
+  if (!down) return;
+  const [x, y] = toGrid(e);
+  let d = Math.hypot(x - down.x, y - down.y);
+  while (d >= STEP) {                              // lay the drawn vein one step at a time
+    const f = STEP / d;
+    down.x += (x - down.x) * f; down.y += (y - down.y) * f;
+    wound(down.x, down.y, DRAG_R, stroke);
+    down.last = addNode(down.x, down.y, down.last, 2.6, undefined, stroke);
+    down.list.push(down.last);
+    d = Math.hypot(x - down.x, y - down.y);
+  }
+  for (const k of down.list) if (nodes[k].p >= 0) drawSegment(nodes[nodes[k].p], nodes[k]);   // the wound erased part of it
+});
+
+const release = () => {
+  if (!down) return;
+  if (Math.hypot(down.x - down.sx, down.y - down.sy) < 4) wound(down.sx, down.sy, CLICK_R, stroke);  // a click
+  down = null;
+};
+cv.addEventListener('pointerup', release);
+cv.addEventListener('pointercancel', release);
+
+let resizeTimer;
+addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(init, 250); });
+
+// ---------- loop -------------------------------------------------------------
+const t0 = performance.now();
+function frame() {
+  grow(); grow();
+  if (deadCount > 40000 && !down) compact();
+  if (dirty) readSources();
+  diffuse();
+  render((performance.now() - t0) / 1000);
+  requestAnimationFrame(frame);
+}
+init();
 requestAnimationFrame(frame);
 </script>
 </body>
