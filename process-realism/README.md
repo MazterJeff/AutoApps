@@ -15,9 +15,12 @@ screen in two flat tones. Open the file in a browser.
    middle `u` is pale, and low `u` is dark again. So every vein is a dark line inside a pale ray, and
    where two veins drift apart the ray splits along a dark fold before the veins fork.
 
-The thresholds drift with a slow travelling wave, so the rays keep opening and closing.
+The thresholds drift with a slow travelling wave, so the rays keep opening and closing. The two
+tones come from matched pale/dark pairs whose hue fades slowly across the screen and over time.
 
 **Mouse**
+- **Move:** a caterpillar crawls after the pointer. Its segments follow the path of its head, with
+  a wave of stretching running down the body. Left alone for a few seconds, it wanders.
+- **Drag:** the caterpillar's head lays a vein as it crawls, and the vein sprouts side veins.
 - **Click:** wounds the surface. Veins and pigment inside a disc are wiped, and a seed grows there
   while the surrounding veins grow back in.
-- **Drag:** draws a vein, which sprouts side veins.

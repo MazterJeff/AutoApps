@@ -7,6 +7,7 @@
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #14181d; }
   canvas { display: block; width: 100vw; height: 100vh; cursor: crosshair; touch-action: none; }
+  #bug { position: fixed; left: 0; top: 0; pointer-events: none; }
   #hint {
     position: fixed; left: 0; right: 0; bottom: 22px; text-align: center; pointer-events: none;
     font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .3em;
@@ -16,6 +17,7 @@
 </head>
 <body>
 <canvas id="c"></canvas>
+<canvas id="bug"></canvas>
 <div id="hint">CLICK · DRAG</div>
 <script>
 'use strict';
@@ -32,9 +34,11 @@
 //         high u → dark, middle u → pale, low u → dark again. So every vein
 //         is a dark line inside a pale ray, and where two veins drift apart
 //         the ray splits along a dark fold before the veins fork.
-// The thresholds drift with a slow wave, so the rays keep opening and closing.
+// The thresholds drift with a slow wave, so the rays keep opening and closing,
+// and the two tones fade slowly from hue to hue across the surface.
 //
-// Mouse: click wounds the surface and plants a seed; drag draws a vein.
+// Mouse: a caterpillar crawls after the pointer. Drag, and its head lays a
+// vein; click, and the surface is wounded and reseeded.
 // ---------------------------------------------------------------------------
 
 const CELL = 2;                  // css px per simulation cell
@@ -47,7 +51,6 @@ const WOBBLE = 0.025;
 const LAMBDA = 5;                // pigment decay length (cells)
 const DT = 0.24, ITER = 12;
 const HI = 0.7, LO = 0.2, E = 0.03;
-const INK = [20, 24, 29], PAPER = [222, 214, 196];
 const CLICK_R = 90, DRAG_R = 34; // wound radii (cells)
 
 const rand = Math.random;
@@ -57,6 +60,24 @@ const smooth = (a, b, x) => { x = (x - a) / (b - a); x = x < 0 ? 0 : x > 1 ? 1 :
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 const vc = document.createElement('canvas'), vg = vc.getContext('2d', { willReadFrequently: true });
 const hint = document.getElementById('hint');
+
+// ---------- colour -----------------------------------------------------------
+// Matched pale/dark pairs. The hue drifts across the screen and through time.
+const PAPERS = [[222, 214, 196], [228, 198, 190], [226, 211, 172], [198, 215, 193], [191, 207, 223], [213, 201, 228]];
+const INKS = [[20, 24, 29], [40, 18, 26], [34, 25, 12], [14, 32, 24], [12, 22, 40], [30, 18, 40]];
+const LUT = 1024;
+function makeLut(keys) {
+  const out = new Float32Array(LUT * 3);
+  for (let i = 0; i < LUT; i++) {
+    const f = i / LUT * keys.length, k = f | 0, t = (1 - Math.cos((f - k) * Math.PI)) / 2;
+    const a = keys[k], b = keys[(k + 1) % keys.length];
+    for (let c = 0; c < 3; c++) out[i * 3 + c] = a[c] + (b[c] - a[c]) * t;
+  }
+  return out;
+}
+const PAPER_LUT = makeLut(PAPERS), INK_LUT = makeLut(INKS);
+const HUE_X = 240, HUE_Y = 160, HUE_T = 9;       // spread across the screen; drift per second
+const hueAt = (x, y, t) => ((x / GW * HUE_X + y / GH * HUE_Y + t * HUE_T) | 0) & (LUT - 1);
 
 let GW, GH, N, u, u2, srcList, noise, img, BW, BH, buckets, nodes, atts, dirty, steps;
 
@@ -175,7 +196,7 @@ function compact() {
   for (const n of kept) n.p = n.p >= 0 ? map[n.p] : -1;
   nodes = kept;
   for (let b = 0; b < buckets.length; b++) buckets[b] = buckets[b].map(k => map[k]).filter(k => k >= 0);
-  if (down) { down.last = map[down.last]; down.list = down.list.map(k => map[k]).filter(k => k >= 0); }
+  if (down && down.drag) { down.last = map[down.last]; down.list = down.list.map(k => map[k]).filter(k => k >= 0); }
   deadCount = 0;
 }
 
@@ -229,46 +250,142 @@ function diffuse() {
 }
 
 // ---------- drawing ----------------------------------------------------------
-let colS, colC, rowS, rowC;
+let colS, colC, colH, rowS, rowC, rowH;
 function render(t) {
-  if (!colS || colS.length !== GW) { colS = new Float32Array(GW); colC = new Float32Array(GW); }
-  if (!rowS || rowS.length !== GH) { rowS = new Float32Array(GH); rowC = new Float32Array(GH); }
+  if (!colS || colS.length !== GW) { colS = new Float32Array(GW); colC = new Float32Array(GW); colH = new Float32Array(GW); }
+  if (!rowS || rowS.length !== GH) { rowS = new Float32Array(GH); rowC = new Float32Array(GH); rowH = new Float32Array(GH); }
   const ph = t * 0.35;                             // slow wave: sin(kx·x + ky·y + ph)
-  for (let x = 0; x < GW; x++) { colS[x] = Math.sin(x * 0.011 + ph); colC[x] = Math.cos(x * 0.011 + ph); }
-  for (let y = 0; y < GH; y++) { rowS[y] = Math.sin(y * 0.007); rowC[y] = Math.cos(y * 0.007); }
-  const d = img.data, dr = PAPER[0] - INK[0], dg = PAPER[1] - INK[1], db = PAPER[2] - INK[2];
+  for (let x = 0; x < GW; x++) { colS[x] = Math.sin(x * 0.011 + ph); colC[x] = Math.cos(x * 0.011 + ph); colH[x] = x / GW * HUE_X; }
+  for (let y = 0; y < GH; y++) { rowS[y] = Math.sin(y * 0.007); rowC[y] = Math.cos(y * 0.007); rowH[y] = y / GH * HUE_Y + t * HUE_T; }
+  const d = img.data;
   for (let y = 0, i = 0; y < GH; y++) {
-    const rs = rowS[y], rc = rowC[y];
+    const rs = rowS[y], rc = rowC[y], rh = rowH[y];
     for (let x = 0; x < GW; x++, i++) {
       const w1 = colS[x] * rc + colC[x] * rs, w2 = colC[x] * rc - colS[x] * rs;
       const hi = HI * (1 + 0.08 * w1), lo = LO * (1 + 0.35 * w2);
       const v = u[i] + noise[i];
       const p = smooth(lo - E, lo + E, v) * (1 - smooth(hi - E, hi + E, v));
-      const o = i * 4;
-      d[o] = INK[0] + dr * p; d[o + 1] = INK[1] + dg * p; d[o + 2] = INK[2] + db * p; d[o + 3] = 255;
+      const o = i * 4, j = (((colH[x] + rh) | 0) & (LUT - 1)) * 3;
+      const r = INK_LUT[j], g = INK_LUT[j + 1], b = INK_LUT[j + 2];
+      d[o] = r + (PAPER_LUT[j] - r) * p; d[o + 1] = g + (PAPER_LUT[j + 1] - g) * p; d[o + 2] = b + (PAPER_LUT[j + 2] - b) * p; d[o + 3] = 255;
     }
   }
   ctx.putImageData(img, 0, 0);
 }
 
+// ---------- caterpillar ------------------------------------------------------
+// A chain of segments that follows its own head's path. A wave of stretching
+// runs from tail to head as it crawls. Coordinates here are css px.
+const bug = document.getElementById('bug'), bctx = bug.getContext('2d');
+const SEGS = 12, SIZE = 1.6, GAP = 8.5 * SIZE;
+const head = { x: innerWidth / 2, y: innerHeight / 2 }, target = { x: head.x, y: head.y };
+let dpr = 1, trail = [], crawled = 0, lastMove = -1e9, wander = rand() * 2 * Math.PI;
+
+function sizeBug() {
+  dpr = Math.min(devicePixelRatio || 1, 2);
+  bug.width = Math.round(innerWidth * dpr); bug.height = Math.round(innerHeight * dpr);
+  bug.style.width = innerWidth + 'px'; bug.style.height = innerHeight + 'px';
+  head.x = Math.min(head.x, innerWidth - 1); head.y = Math.min(head.y, innerHeight - 1);
+  trail = [];
+  for (let k = 0; k < 260; k++) trail.push([head.x - k, head.y]);   // newest first
+}
+
+function crawl(now) {
+  if (now - lastMove > 5000) {                     // nobody steering: wander
+    wander += gauss() * 0.12;
+    const m = 60;
+    if (head.x < m) wander = 0; else if (head.x > innerWidth - m) wander = Math.PI;
+    if (head.y < m) wander = Math.PI / 2; else if (head.y > innerHeight - m) wander = -Math.PI / 2;
+    target.x = head.x + Math.cos(wander) * 30; target.y = head.y + Math.sin(wander) * 30;
+  }
+  const dx = target.x - head.x, dy = target.y - head.y, d = Math.hypot(dx, dy);
+  const speed = Math.min(d * 0.16, now - lastMove > 5000 ? 0.9 : 14);
+  if (d > 0.5) { head.x += dx / d * speed; head.y += dy / d * speed; crawled += speed; }
+  const [lx, ly] = trail[0];
+  if (Math.hypot(head.x - lx, head.y - ly) > 1) { trail.unshift([head.x, head.y]); if (trail.length > 600) trail.pop(); }
+}
+
+// Segment centres, walked back along the trail from the head.
+function bodyPoints(phase) {
+  const pts = [[head.x, head.y]];
+  let px = head.x, py = head.y, acc = 0, need = 0, k = 0;
+  for (let i = 1; i < SEGS; i++) {
+    need += GAP * (1 + 0.22 * Math.sin(phase + i * 0.75));
+    while (k < trail.length) {
+      const [qx, qy] = trail[k], L = Math.hypot(qx - px, qy - py);
+      if (L > 0 && acc + L >= need) { const f = (need - acc) / L; px += (qx - px) * f; py += (qy - py) * f; acc = need; break; }
+      acc += L; px = qx; py = qy; k++;
+    }
+    pts.push([px, py]);
+  }
+  return pts;
+}
+
+const css = (L, j, boost = 1) => {
+  const r = L[j], g = L[j + 1], b = L[j + 2], m = (r + g + b) / 3;
+  const c = v => Math.max(0, Math.min(255, Math.round(m + (v - m) * boost)));
+  return `rgb(${c(r)},${c(g)},${c(b)})`;
+};
+
+function drawBug(t) {
+  bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  bctx.clearRect(0, 0, innerWidth, innerHeight);
+  const phase = crawled * 0.12 + t * 0.6, pts = bodyPoints(phase);
+  const h = hueAt(head.x / CELL, head.y / CELL, t);
+  const ink = css(INK_LUT, h * 3), body = css(PAPER_LUT, ((h + LUT / 2) & (LUT - 1)) * 3, 2.6);
+  bctx.lineWidth = 1.8; bctx.strokeStyle = ink;
+  for (let i = SEGS - 1; i >= 1; i--) {            // tail first, so each segment overlaps the one behind
+    const f = i / (SEGS - 1), r = 6.8 * SIZE * (1 - 0.55 * f ** 2.2) * (1 + 0.06 * Math.sin(phase + i * 0.75));
+    const [x, y] = pts[i];
+    bctx.fillStyle = body;
+    bctx.beginPath(); bctx.arc(x, y, r, 0, 2 * Math.PI); bctx.fill(); bctx.stroke();
+    bctx.fillStyle = ink;
+    bctx.beginPath(); bctx.arc(x, y, r * 0.24, 0, 2 * Math.PI); bctx.fill();
+  }
+  const [hx, hy] = pts[0], [nx, ny] = pts[1];
+  let a = Math.atan2(hy - ny, hx - nx);
+  if (!isFinite(a)) a = 0;
+  bctx.fillStyle = ink;
+  bctx.beginPath(); bctx.arc(hx, hy, 7.4 * SIZE, 0, 2 * Math.PI); bctx.fill();
+  for (const s of [-1, 1]) {                       // two short horns and two eyes
+    const ha = a + s * 0.55, ex = hx + Math.cos(ha) * 16 * SIZE, ey = hy + Math.sin(ha) * 16 * SIZE;
+    bctx.beginPath(); bctx.moveTo(hx + Math.cos(ha) * 6 * SIZE, hy + Math.sin(ha) * 6 * SIZE); bctx.lineTo(ex, ey); bctx.stroke();
+    bctx.beginPath(); bctx.arc(ex, ey, 2 * SIZE, 0, 2 * Math.PI); bctx.fill();
+    bctx.fillStyle = body;
+    bctx.beginPath(); bctx.arc(hx + Math.cos(a + s * 0.8) * 3.6 * SIZE, hy + Math.sin(a + s * 0.8) * 3.6 * SIZE, 1.5 * SIZE, 0, 2 * Math.PI); bctx.fill();
+    bctx.fillStyle = ink;
+  }
+}
+
 // ---------- mouse ------------------------------------------------------------
 let stroke = 0, down = null;
-const toGrid = e => [e.clientX / CELL, e.clientY / CELL];
+
+addEventListener('pointermove', e => {
+  target.x = e.clientX; target.y = e.clientY; lastMove = performance.now();
+  if (down && !down.drag && Math.hypot(e.clientX - down.px, e.clientY - down.py) > 8) startVein();
+});
 
 cv.addEventListener('pointerdown', e => {
   cv.setPointerCapture(e.pointerId);
   hint.style.opacity = 0;
-  const [x, y] = toGrid(e);
-  stroke++;
-  wound(x, y, DRAG_R, stroke);
-  down = { x, y, sx: x, sy: y, last: addNode(x, y, -1, 2.6, undefined, stroke), list: [] };
+  target.x = e.clientX; target.y = e.clientY; lastMove = performance.now();
+  down = { px: e.clientX, py: e.clientY, drag: false };
 });
 
-cv.addEventListener('pointermove', e => {
-  if (!down) return;
-  const [x, y] = toGrid(e);
+// Once the press turns into a drag, the caterpillar's head starts laying a vein.
+function startVein() {
+  const x = head.x / CELL, y = head.y / CELL;
+  stroke++;
+  wound(x, y, DRAG_R, stroke);
+  Object.assign(down, { drag: true, x, y, last: addNode(x, y, -1, 2.6, undefined, stroke), list: [] });
+}
+
+function layVein() {
+  if (!down || !down.drag) return;
+  const x = head.x / CELL, y = head.y / CELL;
   let d = Math.hypot(x - down.x, y - down.y);
-  while (d >= STEP) {                              // lay the drawn vein one step at a time
+  if (d < STEP) return;
+  while (d >= STEP) {                              // one step at a time
     const f = STEP / d;
     down.x += (x - down.x) * f; down.y += (y - down.y) * f;
     wound(down.x, down.y, DRAG_R, stroke);
@@ -277,30 +394,40 @@ cv.addEventListener('pointermove', e => {
     d = Math.hypot(x - down.x, y - down.y);
   }
   for (const k of down.list) if (nodes[k].p >= 0) drawSegment(nodes[nodes[k].p], nodes[k]);   // the wound erased part of it
-});
+}
 
 const release = () => {
   if (!down) return;
-  if (Math.hypot(down.x - down.sx, down.y - down.sy) < 4) wound(down.sx, down.sy, CLICK_R, stroke);  // a click
+  if (!down.drag) {                                // a click: wound and reseed
+    const x = down.px / CELL, y = down.py / CELL;
+    stroke++;
+    wound(x, y, CLICK_R, stroke);
+    addNode(x, y, -1, 2.6, undefined, stroke);
+  }
   down = null;
 };
 cv.addEventListener('pointerup', release);
 cv.addEventListener('pointercancel', release);
 
 let resizeTimer;
-addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(init, 250); });
+addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { init(); sizeBug(); }, 250); });
 
 // ---------- loop -------------------------------------------------------------
 const t0 = performance.now();
 function frame() {
+  const now = performance.now(), t = (now - t0) / 1000;
+  crawl(now);
+  layVein();
   grow(); grow();
   if (deadCount > 40000 && !down) compact();
   if (dirty) readSources();
   diffuse();
-  render((performance.now() - t0) / 1000);
+  render(t);
+  drawBug(t);
   requestAnimationFrame(frame);
 }
 init();
+sizeBug();
 requestAnimationFrame(frame);
 </script>
 </body>
